@@ -6,9 +6,13 @@
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "hello-ai",
 	"main": "src/index.ts",
-	"compatibility_date": "2026-04-13",
+	"compatibility_date": "2026-03-10",
 	"observability": {
 		"enabled": true
+	},
+	"ai": {
+		"binding": "AI",
+		"remote": true
 	},
 	"upload_source_maps": true,
 	"compatibility_flags": [
