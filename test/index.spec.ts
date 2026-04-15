@@ -13,8 +13,21 @@ function createEnv(response: Awaited<ReturnType<Env["AI"]["run"]>>): Env {
 }
 
 describe("hello-ai worker", () => {
-	it("returns route instructions on GET", async () => {
-		const request = new IncomingRequest("http://example.com");
+	it("returns the browser chat demo on GET /", async () => {
+		const request = new IncomingRequest("http://example.com/");
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, createEnv({}), ctx);
+
+		await waitOnExecutionContext(ctx);
+		expect(response.status).toBe(200);
+		expect(response.headers.get("content-type")).toContain("text/html");
+		const html = await response.text();
+		expect(html).toContain("<title>Hello AI</title>");
+		expect(html).toContain("POST /chat");
+	});
+
+	it("returns health metadata on GET /health", async () => {
+		const request = new IncomingRequest("http://example.com/health");
 		const ctx = createExecutionContext();
 		const response = await worker.fetch(request, createEnv({}), ctx);
 
@@ -22,14 +35,68 @@ describe("hello-ai worker", () => {
 		expect(response.status).toBe(200);
 		await expect(response.json()).resolves.toEqual({
 			ok: true,
-			message: 'Send a POST request with JSON like { "input": "your prompt" }',
-			route: "/",
+			service: "hello-ai",
 			model: "@cf/openai/gpt-oss-120b",
+			routes: {
+				chat: "POST /chat",
+				analyze: "POST /analyze",
+				health: "GET /health",
+			},
 		});
 	});
 
-	it("returns only parsed data and usage on successful POST", async () => {
-		const request = new IncomingRequest("http://example.com", {
+	it("returns a conversational response on POST /chat", async () => {
+		const request = new IncomingRequest("http://example.com/chat", {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+			},
+			body: JSON.stringify({
+				sessionId: "session-123",
+				messages: [{ role: "user", content: "What can this bot help with?" }],
+			}),
+		});
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(
+			request,
+			createEnv({
+				output: [
+					{
+						type: "message",
+						content: [
+							{
+								type: "output_text",
+								text: "It can answer questions and help structure ideas.",
+							},
+						],
+					},
+				],
+				usage: {
+					input_tokens: 12,
+					output_tokens: 15,
+					total_tokens: 27,
+				},
+			}),
+			ctx,
+		);
+
+		await waitOnExecutionContext(ctx);
+		expect(response.status).toBe(200);
+		await expect(response.json()).resolves.toEqual({
+			ok: true,
+			sessionId: "session-123",
+			model: "@cf/openai/gpt-oss-120b",
+			reply: "It can answer questions and help structure ideas.",
+			usage: {
+				input_tokens: 12,
+				output_tokens: 15,
+				total_tokens: 27,
+			},
+		});
+	});
+
+	it("returns only parsed data and usage on successful POST /analyze", async () => {
+		const request = new IncomingRequest("http://example.com/analyze", {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
@@ -90,7 +157,7 @@ describe("hello-ai worker", () => {
 	});
 
 	it("normalizes common model drift into the public contract", async () => {
-		const request = new IncomingRequest("http://example.com", {
+		const request = new IncomingRequest("http://example.com/analyze", {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
@@ -120,8 +187,10 @@ describe("hello-ai worker", () => {
 										type: "subscription",
 									},
 									risks: {
-										regulatory_compliance: "Training content may require certification review",
-										data_privacy: "Employee performance data creates privacy obligations",
+										regulatory_compliance:
+											"Training content may require certification review",
+										data_privacy:
+											"Employee performance data creates privacy obligations",
 									},
 									next_actions: [
 										"Validate the first buyer segment",
@@ -169,23 +238,27 @@ describe("hello-ai worker", () => {
 		});
 	});
 
-	it("rejects unsupported methods", async () => {
-		const request = new IncomingRequest("http://example.com", {
-			method: "PUT",
+	it("returns 400 when chat input is missing", async () => {
+		const request = new IncomingRequest("http://example.com/chat", {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+			},
+			body: JSON.stringify({}),
 		});
 		const ctx = createExecutionContext();
 		const response = await worker.fetch(request, createEnv({}), ctx);
 
 		await waitOnExecutionContext(ctx);
-		expect(response.status).toBe(405);
+		expect(response.status).toBe(400);
 		await expect(response.json()).resolves.toEqual({
 			ok: false,
-			error: "Method not allowed. Use POST.",
+			error: "Missing 'messages' or 'input'.",
 		});
 	});
 
-	it("returns 502 when the model emits non-JSON text", async () => {
-		const request = new IncomingRequest("http://example.com", {
+	it("returns 502 when analyze emits non-JSON text", async () => {
+		const request = new IncomingRequest("http://example.com/analyze", {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
