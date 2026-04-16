@@ -54,6 +54,7 @@ type AnalyzeRequestBody = {
 
 export interface Env {
 	AI: AiBinding;
+	hello_ai_prod: D1Database;
 }
 
 export type BranchOpsResponse = {
@@ -572,6 +573,31 @@ function getSessionId(value: unknown): string {
 	return normalized ?? crypto.randomUUID();
 }
 
+async function persistChatMessages(
+	env: Env,
+	sessionId: string,
+	messages: ChatMessage[],
+	reply: string,
+): Promise<void> {
+	const statements: D1PreparedStatement[] = [
+		env.hello_ai_prod
+			.prepare("INSERT OR IGNORE INTO chat_sessions (session_id) VALUES (?)")
+			.bind(sessionId),
+		...messages.map((message) =>
+			env.hello_ai_prod
+				.prepare(
+					"INSERT INTO chat_messages (session_id, role, content) VALUES (?, ?, ?)",
+				)
+				.bind(sessionId, message.role, message.content),
+		),
+		env.hello_ai_prod
+			.prepare("INSERT INTO chat_messages (session_id, role, content) VALUES (?, ?, ?)")
+			.bind(sessionId, "assistant", reply),
+	];
+
+	await env.hello_ai_prod.batch(statements);
+}
+
 function corsHeaders(): HeadersInit {
 	return {
 		"Access-Control-Allow-Origin": "*",
@@ -678,9 +704,17 @@ export default {
 					);
 				}
 
+				const sessionId = getSessionId(body.sessionId);
+
+				try {
+					await persistChatMessages(env, sessionId, messages, reply);
+				} catch (error) {
+					console.error("Failed to persist chat transcript.", error);
+				}
+
 				return jsonResponse({
 					ok: true,
-					sessionId: getSessionId(body.sessionId),
+					sessionId,
 					model: MODEL,
 					reply,
 					usage: raw.usage ?? null,

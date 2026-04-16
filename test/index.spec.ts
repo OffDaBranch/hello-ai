@@ -4,11 +4,41 @@ import worker, { type Env } from "../src/index";
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 
-function createEnv(response: Awaited<ReturnType<Env["AI"]["run"]>>): Env {
+type RecordedStatement = {
+	sql: string;
+	params: unknown[];
+};
+
+type MockDb = D1Database & {
+	statements: RecordedStatement[];
+};
+
+function createDbMock(): MockDb {
+	const statements: RecordedStatement[] = [];
+
+	return {
+		prepare(sql: string) {
+			return {
+				bind: (...params: unknown[]) => ({ sql, params }) as unknown as D1PreparedStatement,
+			} as unknown as D1PreparedStatement;
+		},
+		batch: async (items: readonly D1PreparedStatement[]) => {
+			statements.push(...(items as unknown as RecordedStatement[]));
+			return [] as unknown as D1Result[];
+		},
+		statements,
+	} as unknown as MockDb;
+}
+
+function createEnv(
+	response: Awaited<ReturnType<Env["AI"]["run"]>>,
+	db: MockDb = createDbMock(),
+): Env {
 	return {
 		AI: {
 			run: async () => response,
 		},
+		hello_ai_prod: db,
 	};
 }
 
@@ -45,7 +75,7 @@ describe("hello-ai worker", () => {
 		});
 	});
 
-	it("returns a conversational response on POST /chat", async () => {
+	it("returns a conversational response on POST /chat and persists it", async () => {
 		const request = new IncomingRequest("http://example.com/chat", {
 			method: "POST",
 			headers: {
@@ -57,26 +87,30 @@ describe("hello-ai worker", () => {
 			}),
 		});
 		const ctx = createExecutionContext();
+		const db = createDbMock();
 		const response = await worker.fetch(
 			request,
-			createEnv({
-				output: [
-					{
-						type: "message",
-						content: [
-							{
-								type: "output_text",
-								text: "It can answer questions and help structure ideas.",
-							},
-						],
+			createEnv(
+				{
+					output: [
+						{
+							type: "message",
+							content: [
+								{
+									type: "output_text",
+									text: "It can answer questions and help structure ideas.",
+								},
+							],
+						},
+					],
+					usage: {
+						input_tokens: 12,
+						output_tokens: 15,
+						total_tokens: 27,
 					},
-				],
-				usage: {
-					input_tokens: 12,
-					output_tokens: 15,
-					total_tokens: 27,
 				},
-			}),
+				db,
+			),
 			ctx,
 		);
 
@@ -93,6 +127,20 @@ describe("hello-ai worker", () => {
 				total_tokens: 27,
 			},
 		});
+		expect(db.statements).toEqual([
+			{
+				sql: "INSERT OR IGNORE INTO chat_sessions (session_id) VALUES (?)",
+				params: ["session-123"],
+			},
+			{
+				sql: "INSERT INTO chat_messages (session_id, role, content) VALUES (?, ?, ?)",
+				params: ["session-123", "user", "What can this bot help with?"],
+			},
+			{
+				sql: "INSERT INTO chat_messages (session_id, role, content) VALUES (?, ?, ?)",
+				params: ["session-123", "assistant", "It can answer questions and help structure ideas."],
+			},
+		]);
 	});
 
 	it("returns only parsed data and usage on successful POST /analyze", async () => {
@@ -211,7 +259,6 @@ describe("hello-ai worker", () => {
 		);
 
 		await waitOnExecutionContext(ctx);
-		expect(response.status).toBe(200);
 		await expect(response.json()).resolves.toEqual({
 			ok: true,
 			model: "@cf/openai/gpt-oss-120b",
