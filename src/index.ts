@@ -30,6 +30,18 @@ type AiBinding = {
 	run: (model: string, inputs: Record<string, unknown>) => Promise<AiRunResult>;
 };
 
+type RouteRequestBody = {
+	input?: string;
+	instructions?: string;
+	max_tokens?: number;
+};
+
+type ValidatedRouteRequestBody = {
+	input: string;
+	instructions?: string;
+	max_tokens?: number;
+};
+
 export interface Env {
 	AI: AiBinding;
 }
@@ -43,6 +55,15 @@ export type BranchOpsResponse = {
 };
 
 const MODEL = "@cf/openai/gpt-oss-120b";
+const ROUTES = {
+	root: "/",
+} as const;
+const REQUEST_CONTENT_TYPE = "application/json";
+const ALLOWED_REQUEST_FIELDS = ["input", "instructions", "max_tokens"] as const;
+const MAX_INPUT_CHARS = 8000;
+const MAX_INSTRUCTIONS_CHARS = 2000;
+const DEFAULT_MAX_TOKENS = 700;
+const MAX_ALLOWED_TOKENS = 700;
 const DEFAULT_INSTRUCTIONS =
 	"Return valid JSON only with keys: objective, classification, monetization_model, risks, next_actions. Type rules: objective must be a string, classification must be a single string label, monetization_model must be an object, risks must be an array of strings, and next_actions must be an array of strings. Do not return nested objects for classification or risks.";
 
@@ -164,6 +185,26 @@ function normalizeBranchOpsResponse(value: unknown): BranchOpsResponse | null {
 	};
 }
 
+function createErrorResponse(
+	status: number,
+	error: string,
+	extra: Record<string, unknown> = {},
+): Response {
+	return Response.json({ ok: false, error, ...extra }, { status });
+}
+
+function createSuccessResponse(
+	data: BranchOpsResponse,
+	usage: Record<string, unknown> | null | undefined,
+): Response {
+	return Response.json({
+		ok: true,
+		model: MODEL,
+		data,
+		usage: usage ?? null,
+	});
+}
+
 export function extractOutputText(result: AiRunResult): string | null {
 	const outputs = result.output;
 	if (!Array.isArray(outputs)) {
@@ -212,97 +253,283 @@ function parseModelResponse(
 	}
 }
 
+async function parseRequestBody(
+	request: Request,
+): Promise<
+	{ ok: true; body: ValidatedRouteRequestBody } | { ok: false; response: Response }
+> {
+	const contentType = request.headers.get("content-type");
+	if (!contentType || !contentType.toLowerCase().includes(REQUEST_CONTENT_TYPE)) {
+		return {
+			ok: false,
+			response: createErrorResponse(415, "Unsupported media type.", {
+				route: ROUTES.root,
+				expected_content_type: REQUEST_CONTENT_TYPE,
+			}),
+		};
+	}
+
+	let body: unknown;
+
+	try {
+		body = await request.json<unknown>();
+	} catch {
+		return {
+			ok: false,
+			response: createErrorResponse(400, "Invalid JSON body.", {
+				route: ROUTES.root,
+			}),
+		};
+	}
+
+	if (!isRecord(body)) {
+		return {
+			ok: false,
+			response: createErrorResponse(400, "Request body must be a JSON object.", {
+				route: ROUTES.root,
+			}),
+		};
+	}
+
+	const unsupportedFields = Object.keys(body).filter(
+		(key) =>
+			!ALLOWED_REQUEST_FIELDS.includes(
+				key as (typeof ALLOWED_REQUEST_FIELDS)[number],
+			),
+	);
+	if (unsupportedFields.length > 0) {
+		return {
+			ok: false,
+			response: createErrorResponse(400, "Unsupported request fields.", {
+				route: ROUTES.root,
+				unsupported_fields: unsupportedFields,
+			}),
+		};
+	}
+
+	const input = normalizeString(body.input);
+	if (!input) {
+		return {
+			ok: false,
+			response: createErrorResponse(400, "Missing 'input'.", {
+				route: ROUTES.root,
+			}),
+		};
+	}
+
+	if (input.length > MAX_INPUT_CHARS) {
+		return {
+			ok: false,
+			response: createErrorResponse(
+				400,
+				`'input' exceeds ${MAX_INPUT_CHARS} characters.`,
+				{
+					route: ROUTES.root,
+				},
+			),
+		};
+	}
+
+	const validatedBody: ValidatedRouteRequestBody = { input };
+
+	if ("instructions" in body && body.instructions !== undefined) {
+		const instructions = normalizeString(body.instructions);
+		if (!instructions) {
+			return {
+				ok: false,
+				response: createErrorResponse(
+					400,
+					"'instructions' must be a non-empty string when provided.",
+					{
+						route: ROUTES.root,
+					},
+				),
+			};
+		}
+
+		if (instructions.length > MAX_INSTRUCTIONS_CHARS) {
+			return {
+				ok: false,
+				response: createErrorResponse(
+					400,
+					`'instructions' exceeds ${MAX_INSTRUCTIONS_CHARS} characters.`,
+					{
+						route: ROUTES.root,
+					},
+				),
+			};
+		}
+
+		validatedBody.instructions = instructions;
+	}
+
+	if ("max_tokens" in body && body.max_tokens !== undefined) {
+		if (
+			typeof body.max_tokens !== "number" ||
+			!Number.isInteger(body.max_tokens)
+		) {
+			return {
+				ok: false,
+				response: createErrorResponse(
+					400,
+					"'max_tokens' must be an integer when provided.",
+					{
+						route: ROUTES.root,
+					},
+				),
+			};
+		}
+
+		if (body.max_tokens < 1 || body.max_tokens > MAX_ALLOWED_TOKENS) {
+			return {
+				ok: false,
+				response: createErrorResponse(
+					400,
+					`'max_tokens' must be between 1 and ${MAX_ALLOWED_TOKENS}.`,
+					{
+						route: ROUTES.root,
+					},
+				),
+			};
+		}
+
+		validatedBody.max_tokens = body.max_tokens;
+	}
+
+	return { ok: true, body: validatedBody };
+}
+
+async function handleAnalyze(request: Request, env: Env): Promise<Response> {
+	const parsedBody = await parseRequestBody(request);
+	if (!parsedBody.ok) {
+		return parsedBody.response;
+	}
+
+	try {
+		const raw = await env.AI.run(MODEL, {
+			instructions: parsedBody.body.instructions ?? DEFAULT_INSTRUCTIONS,
+			input: parsedBody.body.input,
+			max_tokens: parsedBody.body.max_tokens ?? DEFAULT_MAX_TOKENS,
+			temperature: 0.2,
+		});
+
+		const parsedResponse = parseModelResponse(raw);
+		if ("error" in parsedResponse) {
+			return createErrorResponse(502, parsedResponse.error, {
+				route: ROUTES.root,
+				model: MODEL,
+				...(parsedResponse.rawText
+					? {
+							raw_text: parsedResponse.rawText,
+					  }
+					: {}),
+			});
+		}
+
+		const normalized = normalizeBranchOpsResponse(parsedResponse.parsed);
+		if (!normalized) {
+			return createErrorResponse(502, "Model returned invalid JSON contract.", {
+				route: ROUTES.root,
+				model: MODEL,
+				...(parsedResponse.rawText
+					? {
+							raw_text: parsedResponse.rawText,
+					  }
+					: {}),
+			});
+		}
+
+		return createSuccessResponse(normalized, raw.usage);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Unknown error";
+		return createErrorResponse(500, message, { route: ROUTES.root });
+	}
+}
+
+function handleRoot(): Response {
+	return Response.json({
+		ok: true,
+		message:
+			"Controlled intake worker. Use GET / for the contract map and POST / for normalized analysis.",
+		route: ROUTES.root,
+		route_map: [
+			{
+				path: ROUTES.root,
+				method: "GET",
+				purpose: "Inspect the runtime contract, limits, and required bindings.",
+				response_fields: [
+					"ok",
+					"message",
+					"route",
+					"route_map",
+					"request_contract",
+					"runtime_requirements",
+					"model",
+				],
+			},
+			{
+				path: ROUTES.root,
+				method: "POST",
+				purpose:
+					"Validate an intake payload, run the model, and return normalized analysis JSON.",
+				request_body: {
+					content_type: REQUEST_CONTENT_TYPE,
+					required_fields: ["input"],
+					optional_fields: ["instructions", "max_tokens"],
+				},
+				response_fields: [
+					"objective",
+					"classification",
+					"monetization_model",
+					"risks",
+					"next_actions",
+				],
+			},
+		],
+		request_contract: {
+			content_type: REQUEST_CONTENT_TYPE,
+			required_fields: ["input"],
+			optional_fields: ["instructions", "max_tokens"],
+			limits: {
+				input_max_chars: MAX_INPUT_CHARS,
+				instructions_max_chars: MAX_INSTRUCTIONS_CHARS,
+				max_tokens_default: DEFAULT_MAX_TOKENS,
+				max_tokens_max: MAX_ALLOWED_TOKENS,
+			},
+		},
+		runtime_requirements: {
+			bindings: ["AI"],
+			vars: [],
+		},
+		model: MODEL,
+	});
+}
+
+function handleMethodNotAllowed(): Response {
+	return createErrorResponse(405, "Method not allowed. Use GET or POST.", {
+		route: ROUTES.root,
+	});
+}
+
+function handleNotFound(pathname: string): Response {
+	return createErrorResponse(404, "Route not found.", { route: pathname });
+}
+
 export default {
 	async fetch(request: Request, env: Env): Promise<Response> {
+		const pathname = new URL(request.url).pathname;
+		if (pathname !== ROUTES.root) {
+			return handleNotFound(pathname);
+		}
+
 		if (request.method === "GET") {
-			return Response.json({
-				ok: true,
-				message: 'Send a POST request with JSON like { "input": "your prompt" }',
-				route: "/",
-				model: MODEL,
-			});
+			return handleRoot();
 		}
 
-		if (request.method !== "POST") {
-			return Response.json(
-				{ ok: false, error: "Method not allowed. Use POST." },
-				{ status: 405 },
-			);
+		if (request.method === "POST") {
+			return handleAnalyze(request, env);
 		}
 
-		let body: {
-			input?: string;
-			instructions?: string;
-			max_tokens?: number;
-		};
-
-		try {
-			body = await request.json<typeof body>();
-		} catch {
-			return Response.json(
-				{ ok: false, error: "Invalid JSON body." },
-				{ status: 400 },
-			);
-		}
-
-		if (!body.input || !body.input.trim()) {
-			return Response.json(
-				{ ok: false, error: "Missing 'input'." },
-				{ status: 400 },
-			);
-		}
-
-		try {
-			const raw = await env.AI.run(MODEL, {
-				instructions: body.instructions ?? DEFAULT_INSTRUCTIONS,
-				input: body.input,
-				max_tokens: body.max_tokens ?? 700,
-				temperature: 0.2,
-			});
-
-			const parsedResponse = parseModelResponse(raw);
-			if ("error" in parsedResponse) {
-				return Response.json(
-					{
-						ok: false,
-						error: parsedResponse.error,
-						model: MODEL,
-						...(parsedResponse.rawText
-							? {
-									raw_text: parsedResponse.rawText,
-							  }
-							: {}),
-					},
-					{ status: 502 },
-				);
-			}
-
-			const normalized = normalizeBranchOpsResponse(parsedResponse.parsed);
-			if (!normalized) {
-				return Response.json(
-					{
-						ok: false,
-						error: "Model returned invalid JSON contract.",
-						model: MODEL,
-						...(parsedResponse.rawText
-							? {
-									raw_text: parsedResponse.rawText,
-							  }
-							: {}),
-					},
-					{ status: 502 },
-				);
-			}
-
-			return Response.json({
-				ok: true,
-				model: MODEL,
-				data: normalized,
-				usage: raw.usage ?? null,
-			});
-		} catch (error) {
-			const message = error instanceof Error ? error.message : "Unknown error";
-			return Response.json({ ok: false, error: message }, { status: 500 });
-		}
+		return handleMethodNotAllowed();
 	},
 } satisfies ExportedHandler<Env>;
