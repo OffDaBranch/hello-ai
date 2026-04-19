@@ -19,7 +19,8 @@ function createDbMock(): MockDb {
 	return {
 		prepare(sql: string) {
 			return {
-				bind: (...params: unknown[]) => ({ sql, params }) as unknown as D1PreparedStatement,
+				bind: (...params: unknown[]) =>
+					({ sql, params }) as unknown as D1PreparedStatement,
 			} as unknown as D1PreparedStatement;
 		},
 		batch: async (items: readonly D1PreparedStatement[]) => {
@@ -56,23 +57,38 @@ describe("hello-ai worker", () => {
 		expect(html).toContain("POST /chat");
 	});
 
-	it("returns health metadata on GET /health", async () => {
+	it("returns an explicit route map on GET /health", async () => {
 		const request = new IncomingRequest("http://example.com/health");
 		const ctx = createExecutionContext();
 		const response = await worker.fetch(request, createEnv({}), ctx);
 
 		await waitOnExecutionContext(ctx);
 		expect(response.status).toBe(200);
-		await expect(response.json()).resolves.toEqual({
+		const payload = await response.json();
+		expect(payload).toMatchObject({
 			ok: true,
 			service: "hello-ai",
 			model: "@cf/openai/gpt-oss-120b",
 			routes: {
+				root: "GET /",
+				health: "GET /health",
 				chat: "POST /chat",
 				analyze: "POST /analyze",
-				health: "GET /health",
+			},
+			runtime_requirements: {
+				bindings: ["AI", "hello_ai_prod"],
+				vars: [],
 			},
 		});
+		expect(payload.route_map).toHaveLength(4);
+		expect(payload.request_contracts.chat.content_type).toBe("application/json");
+		expect(payload.request_contracts.analyze.response_fields).toEqual([
+			"objective",
+			"classification",
+			"monetization_model",
+			"risks",
+			"next_actions",
+		]);
 	});
 
 	it("returns a conversational response on POST /chat and persists it", async () => {
@@ -138,9 +154,54 @@ describe("hello-ai worker", () => {
 			},
 			{
 				sql: "INSERT INTO chat_messages (session_id, role, content) VALUES (?, ?, ?)",
-				params: ["session-123", "assistant", "It can answer questions and help structure ideas."],
+				params: [
+					"session-123",
+					"assistant",
+					"It can answer questions and help structure ideas.",
+				],
 			},
 		]);
+	});
+
+	it("rejects chat requests without application/json", async () => {
+		const request = new IncomingRequest("http://example.com/chat", {
+			method: "POST",
+			headers: {
+				"content-type": "text/plain",
+			},
+			body: "hello",
+		});
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, createEnv({}), ctx);
+
+		await waitOnExecutionContext(ctx);
+		expect(response.status).toBe(415);
+		await expect(response.json()).resolves.toEqual({
+			ok: false,
+			error: "Unsupported media type.",
+			route: "/chat",
+			expected_content_type: "application/json",
+		});
+	});
+
+	it("returns 400 when chat input is missing", async () => {
+		const request = new IncomingRequest("http://example.com/chat", {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+			},
+			body: JSON.stringify({}),
+		});
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, createEnv({}), ctx);
+
+		await waitOnExecutionContext(ctx);
+		expect(response.status).toBe(400);
+		await expect(response.json()).resolves.toEqual({
+			ok: false,
+			error: "Missing 'messages' or 'input'.",
+			route: "/chat",
+		});
 	});
 
 	it("returns only parsed data and usage on successful POST /analyze", async () => {
@@ -285,13 +346,37 @@ describe("hello-ai worker", () => {
 		});
 	});
 
-	it("returns 400 when chat input is missing", async () => {
-		const request = new IncomingRequest("http://example.com/chat", {
+	it("rejects analyze requests without application/json", async () => {
+		const request = new IncomingRequest("http://example.com/analyze", {
+			method: "POST",
+			headers: {
+				"content-type": "text/plain",
+			},
+			body: "analyze this",
+		});
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, createEnv({}), ctx);
+
+		await waitOnExecutionContext(ctx);
+		expect(response.status).toBe(415);
+		await expect(response.json()).resolves.toEqual({
+			ok: false,
+			error: "Unsupported media type.",
+			route: "/analyze",
+			expected_content_type: "application/json",
+		});
+	});
+
+	it("rejects unsupported analyze request fields", async () => {
+		const request = new IncomingRequest("http://example.com/analyze", {
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
 			},
-			body: JSON.stringify({}),
+			body: JSON.stringify({
+				input: "Analyze this startup",
+				temperature: 0.2,
+			}),
 		});
 		const ctx = createExecutionContext();
 		const response = await worker.fetch(request, createEnv({}), ctx);
@@ -300,7 +385,51 @@ describe("hello-ai worker", () => {
 		expect(response.status).toBe(400);
 		await expect(response.json()).resolves.toEqual({
 			ok: false,
-			error: "Missing 'messages' or 'input'.",
+			error: "Unsupported request fields.",
+			route: "/analyze",
+			unsupported_fields: ["temperature"],
+		});
+	});
+
+	it("rejects analyze max_tokens above the allowed limit", async () => {
+		const request = new IncomingRequest("http://example.com/analyze", {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+			},
+			body: JSON.stringify({
+				input: "Analyze this startup",
+				max_tokens: 701,
+			}),
+		});
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, createEnv({}), ctx);
+
+		await waitOnExecutionContext(ctx);
+		expect(response.status).toBe(400);
+		await expect(response.json()).resolves.toEqual({
+			ok: false,
+			error: "'max_tokens' must be between 1 and 700.",
+			route: "/analyze",
+		});
+	});
+
+	it("returns 404 on unknown routes", async () => {
+		const request = new IncomingRequest("http://example.com/unknown");
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, createEnv({}), ctx);
+
+		await waitOnExecutionContext(ctx);
+		expect(response.status).toBe(404);
+		await expect(response.json()).resolves.toEqual({
+			ok: false,
+			error: "Not found.",
+			available_routes: [
+				"GET /",
+				"GET /health",
+				"POST /chat",
+				"POST /analyze",
+			],
 		});
 	});
 
@@ -338,6 +467,7 @@ describe("hello-ai worker", () => {
 		await expect(response.json()).resolves.toEqual({
 			ok: false,
 			error: "Model returned non-JSON text.",
+			route: "/analyze",
 			model: "@cf/openai/gpt-oss-120b",
 			raw_text: "not json",
 		});

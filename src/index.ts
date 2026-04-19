@@ -52,6 +52,20 @@ type AnalyzeRequestBody = {
 	max_tokens?: number;
 };
 
+type ValidatedAnalyzeRequestBody = {
+	input: string;
+	instructions?: string;
+	max_tokens?: number;
+};
+
+type ValidatedChatRequestBody = {
+	sessionId?: string;
+	messages: ChatMessage[];
+	instructions?: string;
+	max_tokens?: number;
+	temperature?: number;
+};
+
 export interface Env {
 	AI: AiBinding;
 	hello_ai_prod: D1Database;
@@ -66,6 +80,27 @@ export type BranchOpsResponse = {
 };
 
 const MODEL = "@cf/openai/gpt-oss-120b";
+const ROUTES = {
+	root: "/",
+	health: "/health",
+	chat: "/chat",
+	analyze: "/analyze",
+} as const;
+const REQUEST_CONTENT_TYPE = "application/json";
+const ANALYZE_ALLOWED_REQUEST_FIELDS = ["input", "instructions", "max_tokens"] as const;
+const CHAT_ALLOWED_REQUEST_FIELDS = [
+	"sessionId",
+	"messages",
+	"input",
+	"instructions",
+	"max_tokens",
+	"temperature",
+] as const;
+const MAX_INPUT_CHARS = 8000;
+const MAX_INSTRUCTIONS_CHARS = 2000;
+const DEFAULT_MAX_TOKENS = 700;
+const MAX_ALLOWED_TOKENS = 700;
+const MAX_CHAT_TEMPERATURE = 2;
 
 const DEFAULT_ANALYZE_INSTRUCTIONS =
 	"Return valid JSON only with keys: objective, classification, monetization_model, risks, next_actions. Type rules: objective must be a string, classification must be a single string label, monetization_model must be an object, risks must be an array of strings, and next_actions must be an array of strings. Do not return nested objects for classification or risks.";
@@ -568,9 +603,8 @@ function buildConversationInput(messages: ChatMessage[]): string {
 		.join("\n\n");
 }
 
-function getSessionId(value: unknown): string {
-	const normalized = normalizeString(value);
-	return normalized ?? crypto.randomUUID();
+function getSessionId(value: string | undefined): string {
+	return value ?? crypto.randomUUID();
 }
 
 async function persistChatMessages(
@@ -631,8 +665,441 @@ function htmlResponse(html: string, init?: ResponseInit): Response {
 	});
 }
 
+function errorResponse(
+	route: string,
+	status: number,
+	error: string,
+	extra: Record<string, unknown> = {},
+): Response {
+	return jsonResponse({ ok: false, error, route, ...extra }, { status });
+}
+
 async function readJson<T>(request: Request): Promise<T> {
 	return (await request.json()) as T;
+}
+
+async function parseJsonObject(
+	request: Request,
+	route: string,
+): Promise<
+	{ ok: true; body: Record<string, unknown> } | { ok: false; response: Response }
+> {
+	const contentType = request.headers.get("content-type");
+	if (!contentType || !contentType.toLowerCase().includes(REQUEST_CONTENT_TYPE)) {
+		return {
+			ok: false,
+			response: errorResponse(route, 415, "Unsupported media type.", {
+				expected_content_type: REQUEST_CONTENT_TYPE,
+			}),
+		};
+	}
+
+	let body: unknown;
+
+	try {
+		body = await readJson<unknown>(request);
+	} catch {
+		return {
+			ok: false,
+			response: errorResponse(route, 400, "Invalid JSON body."),
+		};
+	}
+
+	if (!isRecord(body)) {
+		return {
+			ok: false,
+			response: errorResponse(route, 400, "Request body must be a JSON object."),
+		};
+	}
+
+	return { ok: true, body };
+}
+
+function getUnsupportedFields(
+	body: Record<string, unknown>,
+	allowedFields: readonly string[],
+): string[] {
+	return Object.keys(body).filter((key) => !allowedFields.includes(key));
+}
+
+function validateInput(
+	value: unknown,
+	route: string,
+	required = true,
+): { ok: true; value?: string } | { ok: false; response: Response } {
+	if (value === undefined) {
+		if (required) {
+			return {
+				ok: false,
+				response: errorResponse(route, 400, "Missing 'input'."),
+			};
+		}
+
+		return { ok: true, value: undefined };
+	}
+
+	const input = normalizeString(value);
+	if (!input) {
+		return {
+			ok: false,
+			response: errorResponse(route, 400, "Missing 'input'."),
+		};
+	}
+
+	if (input.length > MAX_INPUT_CHARS) {
+		return {
+			ok: false,
+			response: errorResponse(
+				route,
+				400,
+				`'input' exceeds ${MAX_INPUT_CHARS} characters.`,
+			),
+		};
+	}
+
+	return { ok: true, value: input };
+}
+
+function validateInstructions(
+	value: unknown,
+	route: string,
+): { ok: true; value?: string } | { ok: false; response: Response } {
+	if (value === undefined) {
+		return { ok: true, value: undefined };
+	}
+
+	const instructions = normalizeString(value);
+	if (!instructions) {
+		return {
+			ok: false,
+			response: errorResponse(
+				route,
+				400,
+				"'instructions' must be a non-empty string when provided.",
+			),
+		};
+	}
+
+	if (instructions.length > MAX_INSTRUCTIONS_CHARS) {
+		return {
+			ok: false,
+			response: errorResponse(
+				route,
+				400,
+				`'instructions' exceeds ${MAX_INSTRUCTIONS_CHARS} characters.`,
+			),
+		};
+	}
+
+	return { ok: true, value: instructions };
+}
+
+function validateMaxTokens(
+	value: unknown,
+	route: string,
+): { ok: true; value?: number } | { ok: false; response: Response } {
+	if (value === undefined) {
+		return { ok: true, value: undefined };
+	}
+
+	if (typeof value !== "number" || !Number.isInteger(value)) {
+		return {
+			ok: false,
+			response: errorResponse(
+				route,
+				400,
+				"'max_tokens' must be an integer when provided.",
+			),
+		};
+	}
+
+	if (value < 1 || value > MAX_ALLOWED_TOKENS) {
+		return {
+			ok: false,
+			response: errorResponse(
+				route,
+				400,
+				`'max_tokens' must be between 1 and ${MAX_ALLOWED_TOKENS}.`,
+			),
+		};
+	}
+
+	return { ok: true, value };
+}
+
+function validateTemperature(
+	value: unknown,
+	route: string,
+): { ok: true; value?: number } | { ok: false; response: Response } {
+	if (value === undefined) {
+		return { ok: true, value: undefined };
+	}
+
+	if (typeof value !== "number" || Number.isNaN(value)) {
+		return {
+			ok: false,
+			response: errorResponse(
+				route,
+				400,
+				"'temperature' must be a number when provided.",
+			),
+		};
+	}
+
+	if (value < 0 || value > MAX_CHAT_TEMPERATURE) {
+		return {
+			ok: false,
+			response: errorResponse(
+				route,
+				400,
+				`'temperature' must be between 0 and ${MAX_CHAT_TEMPERATURE}.`,
+			),
+		};
+	}
+
+	return { ok: true, value };
+}
+
+function validateSessionId(
+	value: unknown,
+	route: string,
+): { ok: true; value?: string } | { ok: false; response: Response } {
+	if (value === undefined) {
+		return { ok: true, value: undefined };
+	}
+
+	const sessionId = normalizeString(value);
+	if (!sessionId) {
+		return {
+			ok: false,
+			response: errorResponse(
+				route,
+				400,
+				"'sessionId' must be a non-empty string when provided.",
+			),
+		};
+	}
+
+	return { ok: true, value: sessionId };
+}
+
+async function parseAnalyzeRequestBody(
+	request: Request,
+): Promise<
+	{ ok: true; body: ValidatedAnalyzeRequestBody } | { ok: false; response: Response }
+> {
+	const parsed = await parseJsonObject(request, ROUTES.analyze);
+	if (!parsed.ok) {
+		return parsed;
+	}
+
+	const unsupportedFields = getUnsupportedFields(
+		parsed.body,
+		ANALYZE_ALLOWED_REQUEST_FIELDS,
+	);
+	if (unsupportedFields.length > 0) {
+		return {
+			ok: false,
+			response: errorResponse(ROUTES.analyze, 400, "Unsupported request fields.", {
+				unsupported_fields: unsupportedFields,
+			}),
+		};
+	}
+
+	const input = validateInput(parsed.body.input, ROUTES.analyze);
+	if (!input.ok) {
+		return input;
+	}
+
+	const instructions = validateInstructions(
+		parsed.body.instructions,
+		ROUTES.analyze,
+	);
+	if (!instructions.ok) {
+		return instructions;
+	}
+
+	const maxTokens = validateMaxTokens(parsed.body.max_tokens, ROUTES.analyze);
+	if (!maxTokens.ok) {
+		return maxTokens;
+	}
+
+	return {
+		ok: true,
+		body: {
+			input: input.value!,
+			instructions: instructions.value,
+			max_tokens: maxTokens.value,
+		},
+	};
+}
+
+async function parseChatRequestBody(
+	request: Request,
+): Promise<
+	{ ok: true; body: ValidatedChatRequestBody } | { ok: false; response: Response }
+> {
+	const parsed = await parseJsonObject(request, ROUTES.chat);
+	if (!parsed.ok) {
+		return parsed;
+	}
+
+	const unsupportedFields = getUnsupportedFields(parsed.body, CHAT_ALLOWED_REQUEST_FIELDS);
+	if (unsupportedFields.length > 0) {
+		return {
+			ok: false,
+			response: errorResponse(ROUTES.chat, 400, "Unsupported request fields.", {
+				unsupported_fields: unsupportedFields,
+			}),
+		};
+	}
+
+	const sessionId = validateSessionId(parsed.body.sessionId, ROUTES.chat);
+	if (!sessionId.ok) {
+		return sessionId;
+	}
+
+	const instructions = validateInstructions(parsed.body.instructions, ROUTES.chat);
+	if (!instructions.ok) {
+		return instructions;
+	}
+
+	const maxTokens = validateMaxTokens(parsed.body.max_tokens, ROUTES.chat);
+	if (!maxTokens.ok) {
+		return maxTokens;
+	}
+
+	const temperature = validateTemperature(parsed.body.temperature, ROUTES.chat);
+	if (!temperature.ok) {
+		return temperature;
+	}
+
+	const sanitizedMessages = sanitizeMessages(parsed.body.messages);
+	const fallbackInput = validateInput(parsed.body.input, ROUTES.chat, false);
+	if (!fallbackInput.ok) {
+		return fallbackInput;
+	}
+
+	const messages =
+		sanitizedMessages.length > 0
+			? sanitizedMessages
+			: fallbackInput.value
+				? [{ role: "user" as const, content: fallbackInput.value }]
+				: [];
+
+	if (messages.length === 0) {
+		return {
+			ok: false,
+			response: errorResponse(ROUTES.chat, 400, "Missing 'messages' or 'input'."),
+		};
+	}
+
+	return {
+		ok: true,
+		body: {
+			sessionId: sessionId.value,
+			messages,
+			instructions: instructions.value,
+			max_tokens: maxTokens.value,
+			temperature: temperature.value,
+		},
+	};
+}
+
+function handleHealth(): Response {
+	return jsonResponse({
+		ok: true,
+		service: "hello-ai",
+		model: MODEL,
+		routes: {
+			root: "GET /",
+			health: "GET /health",
+			chat: "POST /chat",
+			analyze: "POST /analyze",
+		},
+		route_map: [
+			{
+				path: ROUTES.root,
+				method: "GET",
+				purpose: "Serve the browser chat demo UI.",
+			},
+			{
+				path: ROUTES.health,
+				method: "GET",
+				purpose: "Inspect route contracts, limits, and runtime requirements.",
+			},
+			{
+				path: ROUTES.chat,
+				method: "POST",
+				purpose: "Run conversational chat and persist the transcript to D1.",
+			},
+			{
+				path: ROUTES.analyze,
+				method: "POST",
+				purpose: "Run structured JSON-contract intake analysis.",
+			},
+		],
+		request_contracts: {
+			chat: {
+				content_type: REQUEST_CONTENT_TYPE,
+				required_one_of: ["messages", "input"],
+				optional_fields: ["sessionId", "instructions", "max_tokens", "temperature"],
+				limits: {
+					input_max_chars: MAX_INPUT_CHARS,
+					instructions_max_chars: MAX_INSTRUCTIONS_CHARS,
+					max_tokens_default: DEFAULT_MAX_TOKENS,
+					max_tokens_max: MAX_ALLOWED_TOKENS,
+					max_messages: MAX_CHAT_MESSAGES,
+					temperature_min: 0,
+					temperature_max: MAX_CHAT_TEMPERATURE,
+				},
+			},
+			analyze: {
+				content_type: REQUEST_CONTENT_TYPE,
+				required_fields: ["input"],
+				optional_fields: ["instructions", "max_tokens"],
+				limits: {
+					input_max_chars: MAX_INPUT_CHARS,
+					instructions_max_chars: MAX_INSTRUCTIONS_CHARS,
+					max_tokens_default: DEFAULT_MAX_TOKENS,
+					max_tokens_max: MAX_ALLOWED_TOKENS,
+				},
+				response_fields: [
+					"objective",
+					"classification",
+					"monetization_model",
+					"risks",
+					"next_actions",
+				],
+			},
+		},
+		runtime_requirements: {
+			bindings: ["AI", "hello_ai_prod"],
+			vars: [],
+		},
+	});
+}
+
+function handleMethodNotAllowed(pathname: string): Response {
+	const allowedMethod =
+		pathname === ROUTES.root || pathname === ROUTES.health ? "GET" : "POST";
+	return errorResponse(pathname, 405, `Method not allowed. Use ${allowedMethod}.`);
+}
+
+function handleNotFound(): Response {
+	return jsonResponse(
+		{
+			ok: false,
+			error: "Not found.",
+			available_routes: [
+				"GET /",
+				"GET /health",
+				"POST /chat",
+				"POST /analyze",
+			],
+		},
+		{ status: 404 },
+	);
 }
 
 export default {
@@ -646,68 +1113,42 @@ export default {
 			});
 		}
 
-		if (request.method === "GET" && url.pathname === "/") {
+		if (request.method === "GET" && url.pathname === ROUTES.root) {
 			return htmlResponse(CHAT_DEMO_HTML);
 		}
 
-		if (request.method === "GET" && url.pathname === "/health") {
-			return jsonResponse({
-				ok: true,
-				service: "hello-ai",
-				model: MODEL,
-				routes: {
-					chat: "POST /chat",
-					analyze: "POST /analyze",
-					health: "GET /health",
-				},
-			});
+		if (request.method === "GET" && url.pathname === ROUTES.health) {
+			return handleHealth();
 		}
 
-		if (request.method === "POST" && url.pathname === "/chat") {
-			let body: ChatRequestBody;
-
-			try {
-				body = await readJson<ChatRequestBody>(request);
-			} catch {
-				return jsonResponse({ ok: false, error: "Invalid JSON body." }, { status: 400 });
-			}
-
-			const sanitizedMessages = sanitizeMessages(body.messages);
-			const fallbackInput = normalizeString(body.input);
-			const messages =
-				sanitizedMessages.length > 0
-					? sanitizedMessages
-					: fallbackInput
-						? [{ role: "user" as const, content: fallbackInput }]
-						: [];
-
-			if (messages.length === 0) {
-				return jsonResponse(
-					{ ok: false, error: "Missing 'messages' or 'input'." },
-					{ status: 400 },
-				);
+		if (request.method === "POST" && url.pathname === ROUTES.chat) {
+			const parsedBody = await parseChatRequestBody(request);
+			if (!parsedBody.ok) {
+				return parsedBody.response;
 			}
 
 			try {
 				const raw = await env.AI.run(MODEL, {
-					instructions: body.instructions ?? DEFAULT_CHAT_INSTRUCTIONS,
-					input: buildConversationInput(messages),
-					max_tokens: body.max_tokens ?? 700,
-					temperature: typeof body.temperature === "number" ? body.temperature : 0.4,
+					instructions: parsedBody.body.instructions ?? DEFAULT_CHAT_INSTRUCTIONS,
+					input: buildConversationInput(parsedBody.body.messages),
+					max_tokens: parsedBody.body.max_tokens ?? DEFAULT_MAX_TOKENS,
+					temperature: parsedBody.body.temperature ?? 0.4,
 				});
 
 				const reply = getModelText(raw);
 				if (!reply) {
-					return jsonResponse(
-						{ ok: false, error: "Model returned no usable chat text.", model: MODEL },
-						{ status: 502 },
+					return errorResponse(
+						ROUTES.chat,
+						502,
+						"Model returned no usable chat text.",
+						{ model: MODEL },
 					);
 				}
 
-				const sessionId = getSessionId(body.sessionId);
+				const sessionId = getSessionId(parsedBody.body.sessionId);
 
 				try {
-					await persistChatMessages(env, sessionId, messages, reply);
+					await persistChatMessages(env, sessionId, parsedBody.body.messages, reply);
 				} catch (error) {
 					console.error("Failed to persist chat transcript.", error);
 				}
@@ -721,54 +1162,45 @@ export default {
 				});
 			} catch (error) {
 				const message = error instanceof Error ? error.message : "Unknown error";
-				return jsonResponse({ ok: false, error: message }, { status: 500 });
+				return errorResponse(ROUTES.chat, 500, message);
 			}
 		}
 
-		if (request.method === "POST" && url.pathname === "/analyze") {
-			let body: AnalyzeRequestBody;
-
-			try {
-				body = await readJson<AnalyzeRequestBody>(request);
-			} catch {
-				return jsonResponse({ ok: false, error: "Invalid JSON body." }, { status: 400 });
-			}
-
-			if (!body.input || !body.input.trim()) {
-				return jsonResponse({ ok: false, error: "Missing 'input'." }, { status: 400 });
+		if (request.method === "POST" && url.pathname === ROUTES.analyze) {
+			const parsedBody = await parseAnalyzeRequestBody(request);
+			if (!parsedBody.ok) {
+				return parsedBody.response;
 			}
 
 			try {
 				const raw = await env.AI.run(MODEL, {
-					instructions: body.instructions ?? DEFAULT_ANALYZE_INSTRUCTIONS,
-					input: body.input,
-					max_tokens: body.max_tokens ?? 700,
+					instructions:
+						parsedBody.body.instructions ?? DEFAULT_ANALYZE_INSTRUCTIONS,
+					input: parsedBody.body.input,
+					max_tokens: parsedBody.body.max_tokens ?? DEFAULT_MAX_TOKENS,
 					temperature: 0.2,
 				});
 
 				const parsedResponse = parseModelResponse(raw);
 				if ("error" in parsedResponse) {
-					return jsonResponse(
-						{
-							ok: false,
-							error: parsedResponse.error,
-							model: MODEL,
-							...(parsedResponse.rawText ? { raw_text: parsedResponse.rawText } : {}),
-						},
-						{ status: 502 },
-					);
+					return errorResponse(ROUTES.analyze, 502, parsedResponse.error, {
+						model: MODEL,
+						...(parsedResponse.rawText ? { raw_text: parsedResponse.rawText } : {}),
+					});
 				}
 
 				const normalized = normalizeBranchOpsResponse(parsedResponse.parsed);
 				if (!normalized) {
-					return jsonResponse(
+					return errorResponse(
+						ROUTES.analyze,
+						502,
+						"Model returned invalid JSON contract.",
 						{
-							ok: false,
-							error: "Model returned invalid JSON contract.",
 							model: MODEL,
-							...(parsedResponse.rawText ? { raw_text: parsedResponse.rawText } : {}),
+							...(parsedResponse.rawText
+								? { raw_text: parsedResponse.rawText }
+								: {}),
 						},
-						{ status: 502 },
 					);
 				}
 
@@ -780,17 +1212,19 @@ export default {
 				});
 			} catch (error) {
 				const message = error instanceof Error ? error.message : "Unknown error";
-				return jsonResponse({ ok: false, error: message }, { status: 500 });
+				return errorResponse(ROUTES.analyze, 500, message);
 			}
 		}
 
-		return jsonResponse(
-			{
-				ok: false,
-				error: "Not found.",
-				available_routes: ["GET /", "GET /health", "POST /chat", "POST /analyze"],
-			},
-			{ status: 404 },
-		);
+		if (
+			url.pathname === ROUTES.root ||
+			url.pathname === ROUTES.health ||
+			url.pathname === ROUTES.chat ||
+			url.pathname === ROUTES.analyze
+		) {
+			return handleMethodNotAllowed(url.pathname);
+		}
+
+		return handleNotFound();
 	},
 } satisfies ExportedHandler<Env>;
