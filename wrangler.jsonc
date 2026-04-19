@@ -14,6 +14,13 @@
 		"binding": "AI",
 		"remote": true
 	},
+	"d1_databases": [
+		{
+			"binding": "hello_ai_prod",
+			"database_name": "hello-ai-prod",
+			"database_id": "366f22db-a615-49d2-a9bf-439469757b47"
+		}
+	],
 	"upload_source_maps": true,
 	"compatibility_flags": [
 		"nodejs_compat"
