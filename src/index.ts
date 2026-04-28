@@ -74,11 +74,20 @@ export interface Env {
 export type BranchOpsResponse = {
 	objective: string;
 	classification: string;
+	asset: Record<string, unknown>;
+	execution_plan: string[];
+	systems: string[];
 	monetization_model: unknown;
-	risks: string[];
-	next_actions: string[];
+	automation_opportunities: string[];
+	legal_compliance_risks: string[];
+	scaling_path: string[];
+	long_term_value: string;
 };
 
+const SERVICE_NAME = "BranchOps AI Intake Worker";
+const ASSET_ID = "BOH-AI-INTAKE-001";
+const OWNER = "Branch Off Holdings LLC";
+const VERSION = "0.1.0";
 const MODEL = "@cf/openai/gpt-oss-120b";
 const ROUTES = {
 	root: "/",
@@ -103,10 +112,10 @@ const MAX_ALLOWED_TOKENS = 700;
 const MAX_CHAT_TEMPERATURE = 2;
 
 const DEFAULT_ANALYZE_INSTRUCTIONS =
-	"Return valid JSON only with keys: objective, classification, monetization_model, risks, next_actions. Type rules: objective must be a string, classification must be a single string label, monetization_model must be an object, risks must be an array of strings, and next_actions must be an array of strings. Do not return nested objects for classification or risks.";
+	"Return valid JSON only with keys: objective, classification, asset, execution_plan, systems, monetization_model, automation_opportunities, legal_compliance_risks, scaling_path, long_term_value. Type rules: objective, classification, and long_term_value must be strings; asset and monetization_model must be objects; execution_plan, systems, automation_opportunities, legal_compliance_risks, and scaling_path must be arrays of strings. Build the response for BranchOps asset planning: convert raw founder/business ideas into a same-day structured asset plan owned by Branch Off Holdings LLC. Do not include Markdown or commentary.";
 
 const DEFAULT_CHAT_INSTRUCTIONS = [
-	"You are Hello AI for Off Da Branch.",
+	"You are BranchOps AI Intake Worker for Branch Off Holdings LLC.",
 	"You are a public-safe strategic assistant.",
 	"Be direct, structured, and useful.",
 	"Prefer ownership, automation, licensing, recurring revenue, and scalable systems when advising on business ideas.",
@@ -121,7 +130,7 @@ const CHAT_DEMO_HTML = `<!doctype html>
 <head>
 	<meta charset="utf-8" />
 	<meta name="viewport" content="width=device-width, initial-scale=1" />
-	<title>Hello AI</title>
+	<title>BranchOps AI Intake Worker</title>
 	<style>
 		:root {
 			color-scheme: dark;
@@ -239,8 +248,8 @@ const CHAT_DEMO_HTML = `<!doctype html>
 <body>
 	<div class="wrapper">
 		<div class="hero">
-			<h1>Hello AI</h1>
-			<p>Cloudflare Worker chatbot demo and JSON analyzer for Off Da Branch.</p>
+			<h1>BranchOps AI Intake Worker</h1>
+			<p>Cloudflare Worker for converting founder and business ideas into structured BranchOps asset plans.</p>
 			<p class="small">This browser demo stores conversation history locally and sends the rolling transcript to <code>/chat</code>.</p>
 		</div>
 
@@ -287,7 +296,7 @@ const CHAT_DEMO_HTML = `<!doctype html>
 				messages = [
 					{
 						role: 'assistant',
-						content: 'Hello. This demo is live. Ask a question to test the Worker chat route.'
+						content: 'BranchOps intake is live. Describe a business idea to structure it into an asset plan.'
 					}
 				];
 				persist();
@@ -484,25 +493,52 @@ function normalizeStringList(value: unknown, includeKeys = false): string[] | nu
 }
 
 function normalizeBranchOpsResponse(value: unknown): BranchOpsResponse | null {
-	if (!isRecord(value) || !("monetization_model" in value)) {
+	if (!isRecord(value)) {
 		return null;
 	}
 
 	const objective = normalizeString(value.objective);
 	const classification = normalizeClassification(value.classification);
-	const risks = normalizeStringList(value.risks, true);
-	const nextActions = normalizeStringList(value.next_actions);
+	const asset = isRecord(value.asset) ? value.asset : null;
+	const executionPlan = normalizeStringList(value.execution_plan, true);
+	const systems = normalizeStringList(value.systems, true);
+	const automationOpportunities = normalizeStringList(
+		value.automation_opportunities,
+		true,
+	);
+	const legalComplianceRisks = normalizeStringList(
+		value.legal_compliance_risks,
+		true,
+	);
+	const scalingPath = normalizeStringList(value.scaling_path, true);
+	const longTermValue = normalizeString(value.long_term_value);
 
-	if (!objective || !classification || !risks || !nextActions) {
+	if (
+		!objective ||
+		!classification ||
+		!asset ||
+		!executionPlan ||
+		!systems ||
+		!("monetization_model" in value) ||
+		!automationOpportunities ||
+		!legalComplianceRisks ||
+		!scalingPath ||
+		!longTermValue
+	) {
 		return null;
 	}
 
 	return {
 		objective,
 		classification,
+		asset,
+		execution_plan: executionPlan,
+		systems,
 		monetization_model: value.monetization_model,
-		risks,
-		next_actions: nextActions,
+		automation_opportunities: automationOpportunities,
+		legal_compliance_risks: legalComplianceRisks,
+		scaling_path: scalingPath,
+		long_term_value: longTermValue,
 	};
 }
 
@@ -1009,7 +1045,11 @@ async function parseChatRequestBody(
 function handleHealth(): Response {
 	return jsonResponse({
 		ok: true,
-		service: "hello-ai",
+		status: "ok",
+		service: SERVICE_NAME,
+		asset_id: ASSET_ID,
+		owner: OWNER,
+		version: VERSION,
 		model: MODEL,
 		routes: {
 			root: "GET /",
@@ -1067,9 +1107,14 @@ function handleHealth(): Response {
 				response_fields: [
 					"objective",
 					"classification",
+					"asset",
+					"execution_plan",
+					"systems",
 					"monetization_model",
-					"risks",
-					"next_actions",
+					"automation_opportunities",
+					"legal_compliance_risks",
+					"scaling_path",
+					"long_term_value",
 				],
 			},
 		},
