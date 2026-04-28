@@ -1,25 +1,25 @@
-# Hello AI
+# BranchOps AI Intake Worker
 
-## Objective
+## Asset Metadata
 
-Provide a Cloudflare-native AI prototype surface for:
+| Field | Value |
+| --- | --- |
+| Asset Name | BranchOps AI Intake Worker |
+| Asset ID | BOH-AI-INTAKE-001 |
+| Owner | Branch Off Holdings LLC |
+| Runtime | Cloudflare Workers + Workers AI + D1 |
+| Purpose | Convert raw founder/business ideas into structured BranchOps asset plans. |
 
-- live browser chat
-- route-based API experimentation
-- hardened JSON-contract analysis
-
-## Current Role
-
-This repository is a public-safe prototype lane for Worker-based AI endpoints, not the canonical BranchOps internal control plane.
+This repository is the public-safe same-day intake Worker for BranchOps asset planning. It is not the internal BranchOps control plane and should not contain private operating records, customer secrets, or production credentials.
 
 ## Route Map
 
 | Method | Path | Purpose | Contract |
 | --- | --- | --- | --- |
-| `GET` | `/` | Serve the browser chat demo UI | HTML demo surface |
-| `GET` | `/health` | Return the explicit route map, request contracts, and runtime requirements | JSON metadata and route contracts |
+| `GET` | `/` | Serve the browser intake/chat demo UI | HTML demo surface |
+| `GET` | `/health` | Return status, asset metadata, route contracts, and runtime requirements | JSON metadata and route contracts |
 | `POST` | `/chat` | Run conversational chat and persist the transcript to D1 | `sessionId`, `reply`, `usage` |
-| `POST` | `/analyze` | Run structured JSON-contract intake analysis | `objective`, `classification`, `monetization_model`, `risks`, `next_actions` |
+| `POST` | `/analyze` | Convert a raw idea into a structured BranchOps asset plan | BranchOps planning schema |
 
 ## Workflow
 
@@ -43,7 +43,7 @@ This repository is a public-safe prototype lane for Worker-based AI endpoints, n
 {
   "sessionId": "optional non-empty string",
   "messages": [
-    { "role": "user", "content": "What can this bot help with?" }
+    { "role": "user", "content": "How should this idea become an asset?" }
   ],
   "input": "optional fallback string",
   "instructions": "optional non-empty string",
@@ -51,17 +51,6 @@ This repository is a public-safe prototype lane for Worker-based AI endpoints, n
   "temperature": 0.4
 }
 ```
-
-Validation rules:
-
-- `content-type` must include `application/json`
-- body must be a JSON object
-- allowed fields are `sessionId`, `messages`, `input`, `instructions`, `max_tokens`, and `temperature`
-- request must include at least one valid `messages` entry or a fallback `input`
-- `input` is capped at `8000` characters when provided
-- `instructions` is capped at `2000` characters
-- `max_tokens` must be an integer between `1` and `700`
-- `temperature` must be a number between `0` and `2`
 
 ### Analyze
 
@@ -79,26 +68,29 @@ Validation rules:
 
 - `content-type` must include `application/json`
 - body must be a JSON object
-- allowed fields are `input`, `instructions`, and `max_tokens`
+- `/analyze` allows only `input`, `instructions`, and `max_tokens`
 - `input` is required and capped at `8000` characters
 - `instructions` is capped at `2000` characters
 - `max_tokens` must be an integer between `1` and `700`
+- `/chat` also supports `sessionId`, `messages`, and `temperature`
 
 ## Response Contracts
 
-### Chat success
+### Health
 
-```json
-{
-  "ok": true,
-  "sessionId": "string",
-  "model": "@cf/openai/gpt-oss-120b",
-  "reply": "string",
-  "usage": {}
-}
-```
+`GET /health` returns:
 
-### Analyze success
+- `ok` and `status`
+- service name
+- asset ID
+- owner
+- version
+- model
+- route map
+- request contracts
+- runtime requirements
+
+### Analyze Success
 
 ```json
 {
@@ -107,15 +99,20 @@ Validation rules:
   "data": {
     "objective": "string",
     "classification": "string",
+    "asset": {},
+    "execution_plan": ["string"],
+    "systems": ["string"],
     "monetization_model": {},
-    "risks": ["string"],
-    "next_actions": ["string"]
+    "automation_opportunities": ["string"],
+    "legal_compliance_risks": ["string"],
+    "scaling_path": ["string"],
+    "long_term_value": "string"
   },
   "usage": {}
 }
 ```
 
-### Error envelope
+### Error Envelope
 
 ```json
 {
@@ -150,14 +147,14 @@ npm run dev
 
 ## Validation Commands
 
-Run these from `C:\Users\embra\hello-ai\hello-ai`:
+Run these from the repository root:
 
 ```powershell
-git status --short --branch
+npm install
+npm run validate
+npm run deploy:dry-run
 git diff --stat
-npm run build
-npm run test
-npx wrangler deploy --dry-run
+git status
 ```
 
 Package scripts:
@@ -177,25 +174,18 @@ Replace `<worker-url>` with the deployed Worker URL or a local `wrangler dev` UR
 ```powershell
 curl.exe https://<worker-url>/
 curl.exe https://<worker-url>/health
-curl.exe -X POST https://<worker-url>/chat -H "content-type: application/json" --data "{\"sessionId\":\"demo-session-001\",\"messages\":[{\"role\":\"user\",\"content\":\"What can this bot help with?\"}]}"
-curl.exe -X POST https://<worker-url>/analyze -H "content-type: application/json" --data "{\"input\":\"Turn this idea into a structured business asset.\"}"
+curl.exe -X POST https://<worker-url>/chat -H "content-type: application/json" --data "{\"sessionId\":\"demo-session-001\",\"messages\":[{\"role\":\"user\",\"content\":\"How should this idea become an asset?\"}]}"
+curl.exe -X POST https://<worker-url>/analyze -H "content-type: application/json" --data "{\"input\":\"Turn this founder idea into a structured BranchOps asset plan.\"}"
 ```
 
 ## Boundary Rules
 
 - Keep internal business logic, private operating records, and sensitive production credentials out of this repository.
-- Treat this repo as a public-safe prototype surface.
-- Do not let prototype scope drift into the primary system-of-record lane.
+- Treat this repo as a public-safe BranchOps intake surface.
+- Do not let intake scope drift into the primary system-of-record lane.
 
 ## System Of Record
 
-- Prototype worker/API experimentation: this repository
+- BranchOps AI Intake Worker: this repository
 - Internal operating platform: `OffDaBranch/branchops-platform`
 - Public product narrative: `OffDaBranch/branchops-public`
-
-## Next Hardening Steps
-
-- add rate limiting and abuse controls
-- add prompt/version management
-- add Airtable or webhook logging for qualified conversations
-- add live deploy verification for route contracts after merge

@@ -43,7 +43,7 @@ function createEnv(
 	};
 }
 
-describe("hello-ai worker", () => {
+describe("BranchOps AI Intake Worker", () => {
 	it("returns the browser chat demo on GET /", async () => {
 		const request = new IncomingRequest("http://example.com/");
 		const ctx = createExecutionContext();
@@ -53,7 +53,7 @@ describe("hello-ai worker", () => {
 		expect(response.status).toBe(200);
 		expect(response.headers.get("content-type")).toContain("text/html");
 		const html = await response.text();
-		expect(html).toContain("<title>Hello AI</title>");
+		expect(html).toContain("<title>BranchOps AI Intake Worker</title>");
 		expect(html).toContain("POST /chat");
 	});
 
@@ -67,7 +67,11 @@ describe("hello-ai worker", () => {
 		const payload = await response.json();
 		expect(payload).toMatchObject({
 			ok: true,
-			service: "hello-ai",
+			status: "ok",
+			service: "BranchOps AI Intake Worker",
+			asset_id: "BOH-AI-INTAKE-001",
+			owner: "Branch Off Holdings LLC",
+			version: "0.1.0",
 			model: "@cf/openai/gpt-oss-120b",
 			routes: {
 				root: "GET /",
@@ -85,9 +89,14 @@ describe("hello-ai worker", () => {
 		expect(payload.request_contracts.analyze.response_fields).toEqual([
 			"objective",
 			"classification",
+			"asset",
+			"execution_plan",
+			"systems",
 			"monetization_model",
-			"risks",
-			"next_actions",
+			"automation_opportunities",
+			"legal_compliance_risks",
+			"scaling_path",
+			"long_term_value",
 		]);
 	});
 
@@ -228,9 +237,18 @@ describe("hello-ai worker", () => {
 								text: JSON.stringify({
 									objective: "Increase B2B sales velocity",
 									classification: "SaaS",
+									asset: {
+										name: "Sales Velocity Intake System",
+										id: "draft",
+										owner: "Branch Off Holdings LLC",
+									},
+									execution_plan: ["Interview three ICP customers"],
+									systems: ["D1 intake log"],
 									monetization_model: { type: "subscription" },
-									risks: ["Long enterprise sales cycle"],
-									next_actions: ["Interview three ICP customers"],
+									automation_opportunities: ["Auto-score qualified leads"],
+									legal_compliance_risks: ["Review claims before launch"],
+									scaling_path: ["Package as a repeatable SaaS module"],
+									long_term_value: "Creates a reusable intake and qualification asset.",
 								}),
 							},
 						],
@@ -253,9 +271,18 @@ describe("hello-ai worker", () => {
 			data: {
 				objective: "Increase B2B sales velocity",
 				classification: "SaaS",
+				asset: {
+					name: "Sales Velocity Intake System",
+					id: "draft",
+					owner: "Branch Off Holdings LLC",
+				},
+				execution_plan: ["Interview three ICP customers"],
+				systems: ["D1 intake log"],
 				monetization_model: { type: "subscription" },
-				risks: ["Long enterprise sales cycle"],
-				next_actions: ["Interview three ICP customers"],
+				automation_opportunities: ["Auto-score qualified leads"],
+				legal_compliance_risks: ["Review claims before launch"],
+				scaling_path: ["Package as a repeatable SaaS module"],
+				long_term_value: "Creates a reusable intake and qualification asset.",
 			},
 			usage: {
 				input_tokens: 101,
@@ -292,19 +319,33 @@ describe("hello-ai worker", () => {
 										product_type: "SaaS",
 										regulatory_category: "Workforce compliance",
 									},
+									asset: {
+										name: "Workforce Training System",
+										asset_type: "Licensable operating system",
+									},
+									execution_plan: {
+										validate: "Validate the first buyer segment",
+										build: "Draft the pilot curriculum",
+									},
+									systems: {
+										database: "D1 intake records",
+										workflow: "Review queue",
+									},
 									monetization_model: {
 										type: "subscription",
 									},
-									risks: {
+									automation_opportunities: {
+										intake: "Generate draft scopes from qualified submissions",
+									},
+									legal_compliance_risks: {
 										regulatory_compliance:
 											"Training content may require certification review",
 										data_privacy:
 											"Employee performance data creates privacy obligations",
 									},
-									next_actions: [
-										"Validate the first buyer segment",
-										"Draft the pilot curriculum",
-									],
+									scaling_path: ["Pilot", "Template", "License"],
+									long_term_value:
+										"Turns repeatable training delivery into a licensable asset.",
 								}),
 							},
 						],
@@ -326,17 +367,28 @@ describe("hello-ai worker", () => {
 			data: {
 				objective: "Launch a licensable workforce training system",
 				classification: "HR Technology | SaaS | Workforce compliance",
+				asset: {
+					name: "Workforce Training System",
+					asset_type: "Licensable operating system",
+				},
+				execution_plan: [
+					"Validate: Validate the first buyer segment",
+					"Build: Draft the pilot curriculum",
+				],
+				systems: ["Database: D1 intake records", "Workflow: Review queue"],
 				monetization_model: {
 					type: "subscription",
 				},
-				risks: [
+				automation_opportunities: [
+					"Intake: Generate draft scopes from qualified submissions",
+				],
+				legal_compliance_risks: [
 					"Regulatory Compliance: Training content may require certification review",
 					"Data Privacy: Employee performance data creates privacy obligations",
 				],
-				next_actions: [
-					"Validate the first buyer segment",
-					"Draft the pilot curriculum",
-				],
+				scaling_path: ["Pilot", "Template", "License"],
+				long_term_value:
+					"Turns repeatable training delivery into a licensable asset.",
 			},
 			usage: {
 				input_tokens: 120,
