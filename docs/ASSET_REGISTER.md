@@ -16,7 +16,7 @@ The current intake modes cover business assets, royalty models, automation workf
 
 Optional lead capture supports follow-up workflows when a submitter chooses to provide contact details. Captured lead records are export-ready through a bearer-token protected CSV route when `ADMIN_EXPORT_TOKEN` is configured.
 
-The browser surface now presents the asset as an app-style BranchOps workspace with visible feature navigation, planner modes, result cards, lead capture, export/admin status, and health visibility.
+The browser surface now presents the asset as an app-style BranchOps workspace with visible feature navigation, mode-specific planner panels, recommended use cases, prompt helpers, result cards, lead capture, export/admin status, and health visibility.
 
 ## Licensing Potential
 

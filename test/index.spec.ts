@@ -89,6 +89,7 @@ describe("BranchOps AI Intake Worker", () => {
 		expect(html).toContain("Dashboard");
 		expect(html).toContain("New Intake");
 		expect(html).toContain("Licensing Builder");
+		expect(html).toContain("Automation Planner");
 		expect(html).toContain("Lead Capture");
 		expect(html).toContain("Export / Admin");
 		expect(html).toContain("System Health");
@@ -108,8 +109,13 @@ describe("BranchOps AI Intake Worker", () => {
 		expect(html).toContain("Analyze intake");
 		expect(html).toContain("Structured results");
 		expect(html).toContain("Request ID");
-		expect(html).toContain("Throttle Guard");
+		expect(html).toContain("Throttle Limit");
 		expect(html).toContain("D1 Logging");
+		expect(html).toContain("CSV fields");
+		expect(html).toContain("ADMIN_EXPORT_TOKEN");
+		expect(html).toContain("Recommended use case");
+		expect(html).toContain("Prompt helper bullets");
+		expect(html).toContain("Raw /health JSON");
 	});
 
 	it("returns an explicit route map on GET /health", async () => {

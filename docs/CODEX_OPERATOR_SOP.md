@@ -41,9 +41,12 @@ Manual UI checks:
 - Desktop shows a left sidebar with Dashboard, New Intake, Licensing Builder, Lead Capture, Export / Admin, and System Health.
 - Mobile width shows the Menu button and opens the same feature navigation.
 - Planner navigation changes the active analyzer mode text.
+- Each planner panel shows a mode-specific title, recommended use case, prompt helper bullets, and the preselected analyze mode.
 - Analyze intake renders result cards for objective, classification, asset, execution_plan, systems, monetization_model, automation_opportunities, legal_compliance_risks, scaling_path, and long_term_value.
+- Lead Capture lists optional fields, what is stored, what is not stored, and the request_id linkage.
+- Export / Admin lists CSV fields and a safe curl example with an ADMIN_EXPORT_TOKEN placeholder only.
 - System Health fetches `/health` without requiring secrets.
-- Export / Admin shows route and token configuration status without asking for a token.
+- System Health renders readable capability cards plus expandable raw JSON.
 
 ## Validation
 

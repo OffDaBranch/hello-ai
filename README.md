@@ -45,6 +45,15 @@ Sidebar sections:
 
 Selecting a planner section updates the active analyzer mode and the mode description. The structured result area renders cards for the BranchOps schema fields after `/analyze` returns.
 
+Planner panels include:
+
+- mode-specific title and description
+- recommended use case
+- prompt helper bullets
+- preselected `/analyze` mode
+
+Operational panels show lead storage boundaries, CSV export requirements, route/capability health cards, and raw `/health` JSON for debugging.
+
 ## Workflow
 
 `request -> validate -> process -> respond`
