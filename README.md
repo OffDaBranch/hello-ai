@@ -21,6 +21,8 @@ This repository is the public-safe same-day intake Worker for BranchOps asset pl
 | `POST` | `/chat` | Run conversational chat and persist the transcript to D1 | `sessionId`, `reply`, `usage` |
 | `POST` | `/analyze` | Convert a raw idea into a structured BranchOps asset plan | BranchOps planning schema |
 | `GET` | `/admin/export/intake-leads` | Export captured lead records when admin export is configured | Bearer-token protected CSV |
+| `GET` | `/admin/export/sync-queue` | Export lead sync queue records when admin export is configured | Bearer-token protected JSON |
+| `POST` | `/admin/sync/airtable` | Manually sync queued lead records to Airtable | Bearer-token protected JSON summary |
 
 The browser UI is an app-style BranchOps workspace with a desktop sidebar, mobile menu behavior, structured analyzer panel, separate chat lane, lead capture panel, admin export panel, and system health panel.
 
@@ -52,7 +54,7 @@ Planner panels include:
 - prompt helper bullets
 - preselected `/analyze` mode
 
-Operational panels show lead storage boundaries, CSV export requirements, route/capability health cards, and raw `/health` JSON for debugging.
+Operational panels show lead storage boundaries, CSV export requirements, Airtable sync queue metadata, route/capability health cards, and raw `/health` JSON for debugging.
 
 ## Workflow
 
@@ -150,6 +152,7 @@ Supported browser intake modes:
 - route map
 - request contracts
 - runtime requirements
+- safe Airtable sync metadata, including required variable names and route names only
 
 ### Analyze Success
 
@@ -204,9 +207,18 @@ Every JSON response includes `request_id`. `/chat` and `/analyze` use a safe def
 
 The log intentionally does not store full prompt, chat, reply, or idea content by default.
 
-## Lead Capture And Export
+## Lead Capture, Sync Queue, And Export
 
 Optional lead fields on `/analyze` are stored in `intake_leads` only when at least one lead field is provided. The full private prompt is not stored in the lead table.
+
+When an `intake_leads` insert succeeds, the Worker also creates a server-side `lead_sync_queue` row for Airtable:
+
+- `request_id`
+- `destination: airtable`
+- `status: queued`
+- `attempts: 0`
+
+The queue table does not store full prompt content or Airtable secret values. If the queue insert fails, `/analyze` still returns the existing response contract and logs the failure server-side.
 
 `GET /admin/export/intake-leads` returns a CSV export with:
 
@@ -222,6 +234,51 @@ Optional lead fields on `/analyze` are stored in `intake_leads` only when at lea
 
 Admin export is protected by `Authorization: Bearer <token>` when `ADMIN_EXPORT_TOKEN` is configured. If `ADMIN_EXPORT_TOKEN` is missing, the route returns `503` with a safe JSON message explaining that admin export is not configured. No secret is hardcoded in this repo.
 
+`GET /admin/export/sync-queue` returns JSON queue records with the same bearer-token protection.
+
+`POST /admin/sync/airtable` processes a modest batch of queued Airtable records. It reads lead data from `intake_leads` by `request_id`, posts to the Airtable REST API from the Worker runtime, and updates queue rows to `synced` or `error` with a safe `last_error`.
+
+Successful sync responses include:
+
+- `processed`
+- `synced`
+- `failed`
+- `skipped`
+
+No Airtable secret values are exposed in HTML, JSON responses, logs intended for clients, or browser storage.
+
+## Airtable Sync Configuration
+
+Required server variables:
+
+- `ADMIN_EXPORT_TOKEN`
+- `AIRTABLE_API_KEY`
+- `AIRTABLE_BASE_ID`
+- `AIRTABLE_TABLE_NAME`
+
+Configure them as Wrangler secrets:
+
+```powershell
+npx wrangler secret put ADMIN_EXPORT_TOKEN
+npx wrangler secret put AIRTABLE_API_KEY
+npx wrangler secret put AIRTABLE_BASE_ID
+npx wrangler secret put AIRTABLE_TABLE_NAME
+```
+
+Apply the D1 schema locally or remotely as appropriate:
+
+```powershell
+npx wrangler d1 execute hello-ai-prod --file schema.sql --local
+npx wrangler d1 execute hello-ai-prod --file schema.sql --remote
+```
+
+Admin route checks:
+
+```powershell
+curl.exe -H "Authorization: Bearer <ADMIN_EXPORT_TOKEN>" https://<worker-url>/admin/export/sync-queue
+curl.exe -X POST -H "Authorization: Bearer <ADMIN_EXPORT_TOKEN>" https://<worker-url>/admin/sync/airtable
+```
+
 ## Environment Requirements
 
 Runtime bindings:
@@ -235,6 +292,7 @@ D1 schema:
 - `chat_messages`
 - `intake_events`
 - `intake_leads`
+- `lead_sync_queue`
 
 Operator requirements:
 
@@ -281,6 +339,8 @@ curl.exe https://<worker-url>/
 curl.exe https://<worker-url>/health
 curl.exe -X POST https://<worker-url>/chat -H "content-type: application/json" --data "{\"sessionId\":\"demo-session-001\",\"messages\":[{\"role\":\"user\",\"content\":\"How should this idea become an asset?\"}]}"
 curl.exe -X POST https://<worker-url>/analyze -H "content-type: application/json" --data "{\"input\":\"Turn this founder idea into a structured BranchOps asset plan.\"}"
+curl.exe -H "Authorization: Bearer <ADMIN_EXPORT_TOKEN>" https://<worker-url>/admin/export/sync-queue
+curl.exe -X POST -H "Authorization: Bearer <ADMIN_EXPORT_TOKEN>" https://<worker-url>/admin/sync/airtable
 ```
 
 ## Boundary Rules
@@ -288,6 +348,9 @@ curl.exe -X POST https://<worker-url>/analyze -H "content-type: application/json
 - Keep internal business logic, private operating records, and sensitive production credentials out of this repository.
 - Treat this repo as a public-safe BranchOps intake surface.
 - Do not let intake scope drift into the primary system-of-record lane.
+- Keep Airtable API keys, base IDs, table names, and admin tokens server-side.
+- Do not ask users to enter Airtable secrets in the browser.
+- Do not store admin tokens or Airtable secrets in `localStorage`.
 
 ## System Of Record
 

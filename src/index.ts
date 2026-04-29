@@ -77,6 +77,30 @@ type LeadExportRow = LeadFields & {
 	created_at: string;
 };
 
+type LeadSyncQueueRecord = {
+	id: number;
+	request_id: string;
+	destination: string;
+	status: string;
+	attempts: number;
+	last_error: string | null;
+	created_at: string;
+	updated_at: string;
+};
+
+type AirtableLeadSyncRow = LeadSyncQueueRecord &
+	LeadFields & {
+		mode: string | null;
+		lead_created_at: string | null;
+	};
+
+type AirtableSyncSummary = {
+	processed: number;
+	synced: number;
+	failed: number;
+	skipped: number;
+};
+
 type ValidatedAnalyzeRequestBody = {
 	input: string;
 	mode?: string;
@@ -100,6 +124,9 @@ export interface Env {
 	AI: AiBinding;
 	hello_ai_prod: D1Database;
 	ADMIN_EXPORT_TOKEN?: string;
+	AIRTABLE_API_KEY?: string;
+	AIRTABLE_BASE_ID?: string;
+	AIRTABLE_TABLE_NAME?: string;
 }
 
 export type BranchOpsResponse = {
@@ -126,6 +153,8 @@ const ROUTES = {
 	chat: "/chat",
 	analyze: "/analyze",
 	adminExportIntakeLeads: "/admin/export/intake-leads",
+	adminExportSyncQueue: "/admin/export/sync-queue",
+	adminSyncAirtable: "/admin/sync/airtable",
 } as const;
 const REQUEST_CONTENT_TYPE = "application/json";
 const INTAKE_MODES = [
@@ -174,6 +203,13 @@ const LEAD_FIELD_LIMITS = {
 	location: 160,
 	preferred_contact: 80,
 } as const;
+const AIRTABLE_DESTINATION = "airtable";
+const AIRTABLE_SYNC_BATCH_LIMIT = 10;
+const AIRTABLE_REQUIRED_ENV_VARS = [
+	"AIRTABLE_API_KEY",
+	"AIRTABLE_BASE_ID",
+	"AIRTABLE_TABLE_NAME",
+] as const;
 const DEFAULT_MAX_TOKENS = 700;
 const MAX_ALLOWED_TOKENS = 700;
 const MAX_CHAT_TEMPERATURE = 2;
@@ -811,7 +847,17 @@ const CHAT_DEMO_HTML = `<!doctype html>
 						<div class="route-item"><strong>CSV fields</strong><br />request_id, name, email, phone, business_name, location, preferred_contact, mode, created_at</div>
 						<div class="route-item"><strong>Missing token</strong><br />503 admin export is not configured</div>
 					</div>
-					<div class="panel">
+					<div class="callout">
+						<strong>Airtable Sync Queue</strong>
+						<p class="muted">Leads are stored in D1 first. The sync queue is server-side, no Airtable secrets are stored in the browser, and manual sync is admin-token protected.</p>
+					</div>
+					<div class="route-list">
+						<div class="route-item"><strong>Queue route</strong><br /><code>GET /admin/export/sync-queue</code></div>
+						<div class="route-item"><strong>Sync route</strong><br /><code>POST /admin/sync/airtable</code></div>
+						<div class="route-item"><strong>Required server vars</strong><br /><code>AIRTABLE_API_KEY</code>, <code>AIRTABLE_BASE_ID</code>, <code>AIRTABLE_TABLE_NAME</code>, <code>ADMIN_EXPORT_TOKEN</code></div>
+						<div class="route-item"><strong>Secrets boundary</strong><br />Airtable keys stay in Worker environment secrets and are never requested by this browser UI.</div>
+					</div>
+					<div class="callout">
 						<h3>Safe curl example</h3>
 						<pre>curl.exe -H "Authorization: Bearer &lt;ADMIN_EXPORT_TOKEN&gt;" https://&lt;worker-url&gt;/admin/export/intake-leads</pre>
 					</div>
@@ -827,6 +873,7 @@ const CHAT_DEMO_HTML = `<!doctype html>
 					<div id="healthCards" class="health-grid">
 						<div class="route-item"><strong>Status</strong><br /><span id="healthStatus">Not loaded</span></div>
 						<div class="route-item"><strong>Admin export</strong><br /><span id="healthExport">Not loaded</span></div>
+						<div class="route-item"><strong>Airtable sync</strong><br /><span id="healthAirtableSync">Not loaded</span></div>
 						<div class="route-item"><strong>Routes</strong><br /><span id="healthRouteCount">Not loaded</span></div>
 					</div>
 					<div id="healthRoutes" class="route-list"></div>
@@ -928,6 +975,7 @@ const CHAT_DEMO_HTML = `<!doctype html>
 			var dashboardRoutes = document.getElementById('dashboardRoutes');
 			var healthStatus = document.getElementById('healthStatus');
 			var healthExport = document.getElementById('healthExport');
+			var healthAirtableSync = document.getElementById('healthAirtableSync');
 			var healthRouteCount = document.getElementById('healthRouteCount');
 			var healthRoutes = document.getElementById('healthRoutes');
 			var healthOutput = document.getElementById('healthOutput');
@@ -1093,7 +1141,7 @@ const CHAT_DEMO_HTML = `<!doctype html>
 					var descMap = {
 						dashboard: 'A public-safe intake workspace for turning raw ideas into structured BranchOps asset plans.',
 						lead: 'Optional follow-up fields connect request IDs to export-ready lead records.',
-						admin: 'CSV export route metadata without exposing admin credentials.',
+						admin: 'CSV export and Airtable sync metadata without exposing admin credentials.',
 						health: 'Route and capability metadata from the Worker health endpoint.'
 					};
 					activeTitle.textContent = titleMap[panel];
@@ -1191,6 +1239,7 @@ const CHAT_DEMO_HTML = `<!doctype html>
 				var routes = body && body.routes ? Object.keys(body.routes) : [];
 				healthStatus.textContent = body && body.status ? body.status : 'unknown';
 				healthExport.textContent = body && body.admin_export && body.admin_export.configured ? 'Configured' : 'Not configured';
+				healthAirtableSync.textContent = body && body.airtable_sync && body.airtable_sync.configured ? 'Configured' : 'Not configured';
 				healthRouteCount.textContent = String(routes.length);
 				exportConfiguredStatus.textContent = body && body.admin_export && body.admin_export.configured ? 'Yes' : 'No';
 				intakeModeCount.textContent = body && body.request_contracts && body.request_contracts.analyze ? String(body.request_contracts.analyze.intake_modes.length) : '10';
@@ -1636,8 +1685,30 @@ async function persistIntakeLead(
 					mode,
 				),
 		]);
+		await persistLeadSyncQueueItem(env, requestId);
 	} catch (error) {
 		console.error("Failed to persist intake lead.", error);
+	}
+}
+
+async function persistLeadSyncQueueItem(
+	env: Env,
+	requestId: string,
+): Promise<void> {
+	try {
+		await env.hello_ai_prod.batch([
+			env.hello_ai_prod
+				.prepare(
+					[
+						"INSERT INTO lead_sync_queue",
+						"(request_id, destination, status, attempts)",
+						"VALUES (?, ?, ?, ?)",
+					].join(" "),
+				)
+				.bind(requestId, AIRTABLE_DESTINATION, "queued", 0),
+		]);
+	} catch (error) {
+		console.error("Failed to enqueue Airtable lead sync.", error);
 	}
 }
 
@@ -2452,6 +2523,8 @@ function handleHealth(requestId: string, env: Env): Response {
 			chat: "POST /chat",
 			analyze: "POST /analyze",
 			admin_export_intake_leads: "GET /admin/export/intake-leads",
+			admin_export_sync_queue: "GET /admin/export/sync-queue",
+			admin_sync_airtable: "POST /admin/sync/airtable",
 		},
 		route_map: [
 			{
@@ -2478,6 +2551,16 @@ function handleHealth(requestId: string, env: Env): Response {
 				path: ROUTES.adminExportIntakeLeads,
 				method: "GET",
 				purpose: "Export captured intake leads when admin export is configured.",
+			},
+			{
+				path: ROUTES.adminExportSyncQueue,
+				method: "GET",
+				purpose: "Export server-side lead sync queue records when admin export is configured.",
+			},
+			{
+				path: ROUTES.adminSyncAirtable,
+				method: "POST",
+				purpose: "Manually sync queued lead records to Airtable from the Worker runtime.",
 			},
 		],
 		request_contracts: {
@@ -2539,6 +2622,7 @@ function handleHealth(requestId: string, env: Env): Response {
 			fields: Object.keys(LEAD_FIELD_LIMITS),
 			field_limits: LEAD_FIELD_LIMITS,
 			stores_full_prompt: false,
+			sync_queue_destination: AIRTABLE_DESTINATION,
 		},
 		admin_export: {
 			route: ROUTES.adminExportIntakeLeads,
@@ -2546,9 +2630,24 @@ function handleHealth(requestId: string, env: Env): Response {
 			auth: "Bearer token via ADMIN_EXPORT_TOKEN",
 			content_type: "text/csv",
 		},
+		airtable_sync: {
+			enabled: true,
+			configured: isAirtableSyncConfigured(env),
+			required_vars: AIRTABLE_REQUIRED_ENV_VARS,
+			routes: {
+				queue_export: "GET /admin/export/sync-queue",
+				manual_sync: "POST /admin/sync/airtable",
+			},
+			destination: AIRTABLE_DESTINATION,
+		},
 		runtime_requirements: {
 			bindings: ["AI", "hello_ai_prod"],
-			vars: ["ADMIN_EXPORT_TOKEN optional for admin export"],
+			vars: [
+				"ADMIN_EXPORT_TOKEN optional for admin export",
+				"AIRTABLE_API_KEY optional for Airtable sync",
+				"AIRTABLE_BASE_ID optional for Airtable sync",
+				"AIRTABLE_TABLE_NAME optional for Airtable sync",
+			],
 		},
 		throttle: {
 			routes: [ROUTES.chat, ROUTES.analyze],
@@ -2563,7 +2662,8 @@ function handleMethodNotAllowed(pathname: string, requestId: string): Response {
 	const allowedMethod =
 		pathname === ROUTES.root ||
 		pathname === ROUTES.health ||
-		pathname === ROUTES.adminExportIntakeLeads
+		pathname === ROUTES.adminExportIntakeLeads ||
+		pathname === ROUTES.adminExportSyncQueue
 			? "GET"
 			: "POST";
 	return errorResponse(
@@ -2585,6 +2685,8 @@ function handleNotFound(requestId: string): Response {
 				"POST /chat",
 				"POST /analyze",
 				"GET /admin/export/intake-leads",
+				"GET /admin/export/sync-queue",
+				"POST /admin/sync/airtable",
 			],
 		},
 		requestId,
@@ -2606,14 +2708,15 @@ function getBearerToken(request: Request): string | null {
 	return token;
 }
 
-async function handleAdminExportIntakeLeads(
+function getAdminAuthorizationError(
 	request: Request,
 	env: Env,
+	route: string,
 	requestId: string,
-): Promise<Response> {
+): Response | null {
 	if (!env.ADMIN_EXPORT_TOKEN) {
 		return errorResponse(
-			ROUTES.adminExportIntakeLeads,
+			route,
 			503,
 			"Admin export is not configured.",
 			requestId,
@@ -2624,12 +2727,41 @@ async function handleAdminExportIntakeLeads(
 	}
 
 	if (getBearerToken(request) !== env.ADMIN_EXPORT_TOKEN) {
-		return errorResponse(
-			ROUTES.adminExportIntakeLeads,
-			401,
-			"Unauthorized.",
-			requestId,
-		);
+		return errorResponse(route, 401, "Unauthorized.", requestId);
+	}
+
+	return null;
+}
+
+function getMissingAirtableEnvVars(env: Env): string[] {
+	return AIRTABLE_REQUIRED_ENV_VARS.filter((name) => {
+		if (name === "AIRTABLE_API_KEY") {
+			return !env.AIRTABLE_API_KEY;
+		}
+		if (name === "AIRTABLE_BASE_ID") {
+			return !env.AIRTABLE_BASE_ID;
+		}
+		return !env.AIRTABLE_TABLE_NAME;
+	});
+}
+
+function isAirtableSyncConfigured(env: Env): boolean {
+	return getMissingAirtableEnvVars(env).length === 0;
+}
+
+async function handleAdminExportIntakeLeads(
+	request: Request,
+	env: Env,
+	requestId: string,
+): Promise<Response> {
+	const authError = getAdminAuthorizationError(
+		request,
+		env,
+		ROUTES.adminExportIntakeLeads,
+		requestId,
+	);
+	if (authError) {
+		return authError;
 	}
 
 	try {
@@ -2650,6 +2782,221 @@ async function handleAdminExportIntakeLeads(
 			ROUTES.adminExportIntakeLeads,
 			500,
 			message,
+			requestId,
+		);
+	}
+}
+
+async function handleAdminExportSyncQueue(
+	request: Request,
+	env: Env,
+	requestId: string,
+): Promise<Response> {
+	const authError = getAdminAuthorizationError(
+		request,
+		env,
+		ROUTES.adminExportSyncQueue,
+		requestId,
+	);
+	if (authError) {
+		return authError;
+	}
+
+	try {
+		const result = await env.hello_ai_prod
+			.prepare(
+				[
+					"SELECT id, request_id, destination, status, attempts, last_error, created_at, updated_at",
+					"FROM lead_sync_queue",
+					"ORDER BY created_at DESC",
+				].join(" "),
+			)
+			.all<LeadSyncQueueRecord>();
+
+		return jsonResponse(
+			{
+				ok: true,
+				data: {
+					records: result.results ?? [],
+				},
+			},
+			requestId,
+		);
+	} catch (error) {
+		console.error("Failed to export sync queue.", error);
+		return errorResponse(
+			ROUTES.adminExportSyncQueue,
+			500,
+			"Sync queue export failed.",
+			requestId,
+		);
+	}
+}
+
+async function getQueuedAirtableSyncRows(env: Env): Promise<AirtableLeadSyncRow[]> {
+	const result = await env.hello_ai_prod
+		.prepare(
+			[
+				"SELECT",
+				"q.id, q.request_id, q.destination, q.status, q.attempts, q.last_error, q.created_at, q.updated_at,",
+				"l.name, l.email, l.phone, l.business_name, l.location, l.preferred_contact, l.mode, l.created_at AS lead_created_at",
+				"FROM lead_sync_queue q",
+				"LEFT JOIN intake_leads l ON l.request_id = q.request_id",
+				"WHERE q.destination = ? AND q.status = ?",
+				"ORDER BY q.created_at ASC",
+				"LIMIT ?",
+			].join(" "),
+		)
+		.bind(AIRTABLE_DESTINATION, "queued", AIRTABLE_SYNC_BATCH_LIMIT)
+		.all<AirtableLeadSyncRow>();
+
+	return result.results ?? [];
+}
+
+function buildAirtablePayload(rows: AirtableLeadSyncRow[]): Record<string, unknown> {
+	return {
+		records: rows.map((row) => ({
+			fields: {
+				"Request ID": row.request_id,
+				Name: row.name ?? "",
+				Email: row.email ?? "",
+				Phone: row.phone ?? "",
+				"Business Name": row.business_name ?? "",
+				Location: row.location ?? "",
+				"Preferred Contact": row.preferred_contact ?? "",
+				Mode: row.mode ?? "",
+				"Created At": row.lead_created_at ?? row.created_at,
+			},
+		})),
+	};
+}
+
+async function updateLeadSyncQueueStatus(
+	env: Env,
+	ids: number[],
+	status: "synced" | "error",
+	lastError: string | null,
+): Promise<void> {
+	if (ids.length === 0) {
+		return;
+	}
+
+	const updatedAt = new Date().toISOString();
+	await env.hello_ai_prod.batch(
+		ids.map((id) =>
+			env.hello_ai_prod
+				.prepare(
+					"UPDATE lead_sync_queue SET status = ?, attempts = attempts + 1, last_error = ?, updated_at = ? WHERE id = ?",
+				)
+				.bind(status, lastError, updatedAt, id),
+		),
+	);
+}
+
+async function handleAdminSyncAirtable(
+	request: Request,
+	env: Env,
+	requestId: string,
+): Promise<Response> {
+	const authError = getAdminAuthorizationError(
+		request,
+		env,
+		ROUTES.adminSyncAirtable,
+		requestId,
+	);
+	if (authError) {
+		return authError;
+	}
+
+	const missingEnvVars = getMissingAirtableEnvVars(env);
+	if (missingEnvVars.length > 0) {
+		return errorResponse(
+			ROUTES.adminSyncAirtable,
+			503,
+			"Airtable sync is not configured.",
+			requestId,
+			{
+				required_env_vars: AIRTABLE_REQUIRED_ENV_VARS,
+				missing_env_vars: missingEnvVars,
+			},
+		);
+	}
+
+	const summary: AirtableSyncSummary = {
+		processed: 0,
+		synced: 0,
+		failed: 0,
+		skipped: 0,
+	};
+
+	try {
+		const rows = await getQueuedAirtableSyncRows(env);
+		summary.processed = rows.length;
+
+		const missingLeadRows = rows.filter((row) => !row.lead_created_at);
+		if (missingLeadRows.length > 0) {
+			await updateLeadSyncQueueStatus(
+				env,
+				missingLeadRows.map((row) => row.id),
+				"error",
+				"No matching intake_leads record.",
+			);
+			summary.skipped = missingLeadRows.length;
+		}
+
+		const syncRows = rows.filter((row) => row.lead_created_at);
+		if (syncRows.length === 0) {
+			return jsonResponse({ ok: true, data: { summary } }, requestId);
+		}
+
+		const airtableUrl = `https://api.airtable.com/v0/${encodeURIComponent(
+			env.AIRTABLE_BASE_ID!,
+		)}/${encodeURIComponent(env.AIRTABLE_TABLE_NAME!)}`;
+		const airtablePayload = buildAirtablePayload(syncRows);
+		const syncRowIds = syncRows.map((row) => row.id);
+
+		let airtableResponse: Response;
+		try {
+			airtableResponse = await fetch(airtableUrl, {
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${env.AIRTABLE_API_KEY}`,
+					"Content-Type": REQUEST_CONTENT_TYPE,
+				},
+				body: JSON.stringify(airtablePayload),
+			});
+		} catch (error) {
+			console.error("Airtable sync request failed.", error);
+			await updateLeadSyncQueueStatus(
+				env,
+				syncRowIds,
+				"error",
+				"Airtable API request failed.",
+			);
+			summary.failed = syncRows.length;
+			return jsonResponse({ ok: true, data: { summary } }, requestId);
+		}
+
+		if (!airtableResponse.ok) {
+			await updateLeadSyncQueueStatus(
+				env,
+				syncRowIds,
+				"error",
+				`Airtable API returned HTTP ${airtableResponse.status}.`,
+			);
+			summary.failed = syncRows.length;
+			return jsonResponse({ ok: true, data: { summary } }, requestId);
+		}
+
+		await updateLeadSyncQueueStatus(env, syncRowIds, "synced", null);
+		summary.synced = syncRows.length;
+		return jsonResponse({ ok: true, data: { summary } }, requestId);
+	} catch (error) {
+		console.error("Airtable sync failed.", error);
+		return errorResponse(
+			ROUTES.adminSyncAirtable,
+			500,
+			"Airtable sync failed.",
 			requestId,
 		);
 	}
@@ -2680,6 +3027,17 @@ export default {
 			url.pathname === ROUTES.adminExportIntakeLeads
 		) {
 			return handleAdminExportIntakeLeads(request, env, requestId);
+		}
+
+		if (
+			request.method === "GET" &&
+			url.pathname === ROUTES.adminExportSyncQueue
+		) {
+			return handleAdminExportSyncQueue(request, env, requestId);
+		}
+
+		if (request.method === "POST" && url.pathname === ROUTES.adminSyncAirtable) {
+			return handleAdminSyncAirtable(request, env, requestId);
 		}
 
 		if (request.method === "POST" && url.pathname === ROUTES.chat) {
@@ -2922,7 +3280,9 @@ export default {
 			url.pathname === ROUTES.health ||
 			url.pathname === ROUTES.chat ||
 			url.pathname === ROUTES.analyze ||
-			url.pathname === ROUTES.adminExportIntakeLeads
+			url.pathname === ROUTES.adminExportIntakeLeads ||
+			url.pathname === ROUTES.adminExportSyncQueue ||
+			url.pathname === ROUTES.adminSyncAirtable
 		) {
 			return handleMethodNotAllowed(url.pathname, requestId);
 		}
