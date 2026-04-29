@@ -52,8 +52,29 @@ type AnalyzeRequestBody = {
 	audience?: string;
 	urgency?: string;
 	budget?: string;
+	name?: string;
+	email?: string;
+	phone?: string;
+	business_name?: string;
+	location?: string;
+	preferred_contact?: string;
 	instructions?: string;
 	max_tokens?: number;
+};
+
+type LeadFields = {
+	name?: string;
+	email?: string;
+	phone?: string;
+	business_name?: string;
+	location?: string;
+	preferred_contact?: string;
+};
+
+type LeadExportRow = LeadFields & {
+	request_id: string;
+	mode: string | null;
+	created_at: string;
 };
 
 type ValidatedAnalyzeRequestBody = {
@@ -62,6 +83,7 @@ type ValidatedAnalyzeRequestBody = {
 	audience?: string;
 	urgency?: string;
 	budget?: string;
+	lead: LeadFields;
 	instructions?: string;
 	max_tokens?: number;
 };
@@ -77,6 +99,7 @@ type ValidatedChatRequestBody = {
 export interface Env {
 	AI: AiBinding;
 	hello_ai_prod: D1Database;
+	ADMIN_EXPORT_TOKEN?: string;
 }
 
 export type BranchOpsResponse = {
@@ -102,6 +125,7 @@ const ROUTES = {
 	health: "/health",
 	chat: "/chat",
 	analyze: "/analyze",
+	adminExportIntakeLeads: "/admin/export/intake-leads",
 } as const;
 const REQUEST_CONTENT_TYPE = "application/json";
 const INTAKE_MODES = [
@@ -122,6 +146,12 @@ const ANALYZE_ALLOWED_REQUEST_FIELDS = [
 	"audience",
 	"urgency",
 	"budget",
+	"name",
+	"email",
+	"phone",
+	"business_name",
+	"location",
+	"preferred_contact",
 	"instructions",
 	"max_tokens",
 ] as const;
@@ -136,6 +166,14 @@ const CHAT_ALLOWED_REQUEST_FIELDS = [
 const MAX_INPUT_CHARS = 8000;
 const MAX_INSTRUCTIONS_CHARS = 2000;
 const MAX_CONTEXT_FIELD_CHARS = 200;
+const LEAD_FIELD_LIMITS = {
+	name: 120,
+	email: 254,
+	phone: 40,
+	business_name: 160,
+	location: 160,
+	preferred_contact: 80,
+} as const;
 const DEFAULT_MAX_TOKENS = 700;
 const MAX_ALLOWED_TOKENS = 700;
 const MAX_CHAT_TEMPERATURE = 2;
@@ -265,13 +303,29 @@ const CHAT_DEMO_HTML = `<!doctype html>
 			gap: 6px;
 			color: #9fb0c3;
 		}
-		select, textarea {
+		select, textarea, input {
 			width: 100%;
 			padding: 14px;
 			border-radius: 12px;
 			border: 1px solid rgba(148, 163, 184, 0.24);
 			background: #0f172a;
 			color: #e7edf5;
+		}
+		details {
+			border: 1px solid rgba(148, 163, 184, 0.2);
+			border-radius: 12px;
+			padding: 12px;
+			background: rgba(15, 23, 42, 0.52);
+		}
+		summary {
+			cursor: pointer;
+			color: #cbd5e1;
+		}
+		.lead-grid {
+			display: grid;
+			gap: 10px;
+			grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+			margin-top: 12px;
 		}
 		textarea {
 			min-height: 120px;
@@ -331,9 +385,22 @@ const CHAT_DEMO_HTML = `<!doctype html>
 						<option>Compliance / Risk Review</option>
 					</select>
 				</label>
+				<details>
+					<summary>Optional contact info for follow-up</summary>
+					<p class="small">Only add this if you want this intake linked to contact details. Leave it blank for an anonymous draft.</p>
+					<div class="lead-grid">
+						<label>Name<input id="leadName" autocomplete="name" /></label>
+						<label>Email<input id="leadEmail" type="email" autocomplete="email" /></label>
+						<label>Phone<input id="leadPhone" autocomplete="tel" /></label>
+						<label>Business name<input id="leadBusinessName" autocomplete="organization" /></label>
+						<label>Location<input id="leadLocation" autocomplete="address-level2" /></label>
+						<label>Preferred contact<input id="leadPreferredContact" placeholder="email, phone, text..." /></label>
+					</div>
+				</details>
 				<textarea id="messageInput" placeholder="Ask a question, test a workflow, or describe an idea..."></textarea>
 				<div class="actions">
 					<button class="primary" type="submit">Send</button>
+					<button id="analyzeBtn" type="button">Analyze intake</button>
 					<button id="clearBtn" type="button">Clear local chat</button>
 				</div>
 			</form>
@@ -352,7 +419,16 @@ const CHAT_DEMO_HTML = `<!doctype html>
 			var form = document.getElementById('chatForm');
 			var input = document.getElementById('messageInput');
 			var modeSelect = document.getElementById('modeSelect');
+			var analyzeBtn = document.getElementById('analyzeBtn');
 			var clearBtn = document.getElementById('clearBtn');
+			var leadInputs = {
+				name: document.getElementById('leadName'),
+				email: document.getElementById('leadEmail'),
+				phone: document.getElementById('leadPhone'),
+				business_name: document.getElementById('leadBusinessName'),
+				location: document.getElementById('leadLocation'),
+				preferred_contact: document.getElementById('leadPreferredContact')
+			};
 
 			var sessionId = localStorage.getItem(SESSION_KEY) || crypto.randomUUID();
 			localStorage.setItem(SESSION_KEY, sessionId);
@@ -401,6 +477,16 @@ const CHAT_DEMO_HTML = `<!doctype html>
 				chatLog.scrollTop = chatLog.scrollHeight;
 			}
 
+			function collectLeadFields() {
+				return Object.keys(leadInputs).reduce(function (payload, key) {
+					var value = leadInputs[key].value.trim();
+					if (value) {
+						payload[key] = value;
+					}
+					return payload;
+				}, {});
+			}
+
 			async function sendMessage(text) {
 				messages.push({ role: 'user', content: text });
 				render();
@@ -440,6 +526,37 @@ const CHAT_DEMO_HTML = `<!doctype html>
 				persist();
 			}
 
+			async function analyzeMessage(text) {
+				var pending = { role: 'assistant', content: 'Structuring intake...' };
+				messages.push({ role: 'user', content: text });
+				messages.push(pending);
+				render();
+				persist();
+
+				try {
+					var response = await fetch('/analyze', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify(Object.assign({
+							input: text,
+							mode: modeSelect.value
+						}, collectLeadFields()))
+					});
+
+					var payload = await response.json();
+					if (!response.ok || !payload.ok) {
+						throw new Error(payload.error || 'Analyze request failed.');
+					}
+
+					pending.content = JSON.stringify(payload.data, null, 2);
+				} catch (error) {
+					pending.content = 'Error: ' + (error && error.message ? error.message : 'Unknown error');
+				}
+
+				render();
+				persist();
+			}
+
 			form.addEventListener('submit', function (event) {
 				event.preventDefault();
 				var text = input.value.trim();
@@ -463,6 +580,15 @@ const CHAT_DEMO_HTML = `<!doctype html>
 				];
 				persist();
 				render();
+			});
+
+			analyzeBtn.addEventListener('click', function () {
+				var text = input.value.trim();
+				if (!text) {
+					return;
+				}
+				input.value = '';
+				analyzeMessage(text);
 			});
 
 			render();
@@ -799,6 +925,42 @@ async function persistIntakeEvent(env: Env, event: IntakeEvent): Promise<void> {
 	}
 }
 
+async function persistIntakeLead(
+	env: Env,
+	requestId: string,
+	mode: string,
+	lead: LeadFields,
+): Promise<void> {
+	if (!hasLeadFields(lead)) {
+		return;
+	}
+
+	try {
+		await env.hello_ai_prod.batch([
+			env.hello_ai_prod
+				.prepare(
+					[
+						"INSERT INTO intake_leads",
+						"(request_id, name, email, phone, business_name, location, preferred_contact, mode)",
+						"VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+					].join(" "),
+				)
+				.bind(
+					requestId,
+					lead.name ?? null,
+					lead.email ?? null,
+					lead.phone ?? null,
+					lead.business_name ?? null,
+					lead.location ?? null,
+					lead.preferred_contact ?? null,
+					mode,
+				),
+		]);
+	} catch (error) {
+		console.error("Failed to persist intake lead.", error);
+	}
+}
+
 function queueIntakeEvent(
 	ctx: ExecutionContext,
 	env: Env,
@@ -810,6 +972,16 @@ function queueIntakeEvent(
 			timestamp: new Date().toISOString(),
 		}),
 	);
+}
+
+function queueIntakeLead(
+	ctx: ExecutionContext,
+	env: Env,
+	requestId: string,
+	mode: string,
+	lead: LeadFields,
+): void {
+	ctx.waitUntil(persistIntakeLead(env, requestId, mode, lead));
 }
 
 function getAnalyzeMode(body: Pick<ValidatedAnalyzeRequestBody, "mode">): string {
@@ -895,6 +1067,46 @@ function htmlResponse(html: string, init?: ResponseInit): Response {
 	}
 	headers.set("Content-Type", "text/html; charset=utf-8");
 	return new Response(html, {
+		...init,
+		headers,
+	});
+}
+
+function csvEscape(value: unknown): string {
+	const text = value === null || value === undefined ? "" : String(value);
+	return `"${text.replace(/"/g, '""')}"`;
+}
+
+function csvResponse(
+	rows: LeadExportRow[],
+	requestId: string,
+	init?: ResponseInit,
+): Response {
+	const headers = new Headers(init?.headers);
+	for (const [key, value] of Object.entries(corsHeaders())) {
+		headers.set(key, value);
+	}
+	headers.set("Content-Type", "text/csv; charset=utf-8");
+	headers.set("Content-Disposition", 'attachment; filename="branchops-intake-leads.csv"');
+	headers.set("X-Request-Id", requestId);
+
+	const columns = [
+		"request_id",
+		"name",
+		"email",
+		"phone",
+		"business_name",
+		"location",
+		"preferred_contact",
+		"mode",
+		"created_at",
+	] as const;
+	const lines = [
+		columns.join(","),
+		...rows.map((row) => columns.map((column) => csvEscape(row[column])).join(",")),
+	];
+
+	return new Response(lines.join("\n"), {
 		...init,
 		headers,
 	});
@@ -1085,6 +1297,99 @@ function validateOptionalContextField(
 	return { ok: true, value: text };
 }
 
+function validateLeadTextField(
+	value: unknown,
+	fieldName: keyof LeadFields,
+	route: string,
+	requestId: string,
+): { ok: true; value?: string } | { ok: false; response: Response } {
+	if (value === undefined) {
+		return { ok: true, value: undefined };
+	}
+
+	const text = normalizeString(value);
+	if (!text) {
+		return {
+			ok: false,
+			response: errorResponse(
+				route,
+				400,
+				`'${fieldName}' must be a non-empty string when provided.`,
+				requestId,
+			),
+		};
+	}
+
+	const limit = LEAD_FIELD_LIMITS[fieldName];
+	if (text.length > limit) {
+		return {
+			ok: false,
+			response: errorResponse(
+				route,
+				400,
+				`'${fieldName}' exceeds ${limit} characters.`,
+				requestId,
+			),
+		};
+	}
+
+	return { ok: true, value: text };
+}
+
+function validateEmailField(
+	value: unknown,
+	route: string,
+	requestId: string,
+): { ok: true; value?: string } | { ok: false; response: Response } {
+	const email = validateLeadTextField(value, "email", route, requestId);
+	if (!email.ok || !email.value) {
+		return email;
+	}
+
+	if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value)) {
+		return {
+			ok: false,
+			response: errorResponse(
+				route,
+				400,
+				"'email' must be a valid email address when provided.",
+				requestId,
+			),
+		};
+	}
+
+	return email;
+}
+
+function validatePhoneField(
+	value: unknown,
+	route: string,
+	requestId: string,
+): { ok: true; value?: string } | { ok: false; response: Response } {
+	const phone = validateLeadTextField(value, "phone", route, requestId);
+	if (!phone.ok || !phone.value) {
+		return phone;
+	}
+
+	if (!/^[0-9A-Za-z+().\-\s]+$/.test(phone.value)) {
+		return {
+			ok: false,
+			response: errorResponse(
+				route,
+				400,
+				"'phone' contains unsupported characters.",
+				requestId,
+			),
+		};
+	}
+
+	return phone;
+}
+
+function hasLeadFields(lead: LeadFields): boolean {
+	return Object.values(lead).some((value) => Boolean(value));
+}
+
 function validateMaxTokens(
 	value: unknown,
 	route: string,
@@ -1257,6 +1562,56 @@ async function parseAnalyzeRequestBody(
 		return budget;
 	}
 
+	const name = validateLeadTextField(
+		parsed.body.name,
+		"name",
+		ROUTES.analyze,
+		requestId,
+	);
+	if (!name.ok) {
+		return name;
+	}
+
+	const email = validateEmailField(parsed.body.email, ROUTES.analyze, requestId);
+	if (!email.ok) {
+		return email;
+	}
+
+	const phone = validatePhoneField(parsed.body.phone, ROUTES.analyze, requestId);
+	if (!phone.ok) {
+		return phone;
+	}
+
+	const businessName = validateLeadTextField(
+		parsed.body.business_name,
+		"business_name",
+		ROUTES.analyze,
+		requestId,
+	);
+	if (!businessName.ok) {
+		return businessName;
+	}
+
+	const location = validateLeadTextField(
+		parsed.body.location,
+		"location",
+		ROUTES.analyze,
+		requestId,
+	);
+	if (!location.ok) {
+		return location;
+	}
+
+	const preferredContact = validateLeadTextField(
+		parsed.body.preferred_contact,
+		"preferred_contact",
+		ROUTES.analyze,
+		requestId,
+	);
+	if (!preferredContact.ok) {
+		return preferredContact;
+	}
+
 	const instructions = validateInstructions(
 		parsed.body.instructions,
 		ROUTES.analyze,
@@ -1283,6 +1638,14 @@ async function parseAnalyzeRequestBody(
 			audience: audience.value,
 			urgency: urgency.value,
 			budget: budget.value,
+			lead: {
+				name: name.value,
+				email: email.value,
+				phone: phone.value,
+				business_name: businessName.value,
+				location: location.value,
+				preferred_contact: preferredContact.value,
+			},
 			instructions: instructions.value,
 			max_tokens: maxTokens.value,
 		},
@@ -1394,7 +1757,7 @@ async function parseChatRequestBody(
 	};
 }
 
-function handleHealth(requestId: string): Response {
+function handleHealth(requestId: string, env: Env): Response {
 	return jsonResponse({
 		ok: true,
 		status: "ok",
@@ -1408,6 +1771,7 @@ function handleHealth(requestId: string): Response {
 			health: "GET /health",
 			chat: "POST /chat",
 			analyze: "POST /analyze",
+			admin_export_intake_leads: "GET /admin/export/intake-leads",
 		},
 		route_map: [
 			{
@@ -1429,6 +1793,11 @@ function handleHealth(requestId: string): Response {
 				path: ROUTES.analyze,
 				method: "POST",
 				purpose: "Run structured JSON-contract intake analysis.",
+			},
+			{
+				path: ROUTES.adminExportIntakeLeads,
+				method: "GET",
+				purpose: "Export captured intake leads when admin export is configured.",
 			},
 		],
 		request_contracts: {
@@ -1454,6 +1823,12 @@ function handleHealth(requestId: string): Response {
 					"audience",
 					"urgency",
 					"budget",
+					"name",
+					"email",
+					"phone",
+					"business_name",
+					"location",
+					"preferred_contact",
 					"instructions",
 					"max_tokens",
 				],
@@ -1479,9 +1854,21 @@ function handleHealth(requestId: string): Response {
 				],
 			},
 		},
+		lead_capture: {
+			enabled: true,
+			fields: Object.keys(LEAD_FIELD_LIMITS),
+			field_limits: LEAD_FIELD_LIMITS,
+			stores_full_prompt: false,
+		},
+		admin_export: {
+			route: ROUTES.adminExportIntakeLeads,
+			configured: Boolean(env.ADMIN_EXPORT_TOKEN),
+			auth: "Bearer token via ADMIN_EXPORT_TOKEN",
+			content_type: "text/csv",
+		},
 		runtime_requirements: {
 			bindings: ["AI", "hello_ai_prod"],
-			vars: [],
+			vars: ["ADMIN_EXPORT_TOKEN optional for admin export"],
 		},
 		throttle: {
 			routes: [ROUTES.chat, ROUTES.analyze],
@@ -1494,7 +1881,11 @@ function handleHealth(requestId: string): Response {
 
 function handleMethodNotAllowed(pathname: string, requestId: string): Response {
 	const allowedMethod =
-		pathname === ROUTES.root || pathname === ROUTES.health ? "GET" : "POST";
+		pathname === ROUTES.root ||
+		pathname === ROUTES.health ||
+		pathname === ROUTES.adminExportIntakeLeads
+			? "GET"
+			: "POST";
 	return errorResponse(
 		pathname,
 		405,
@@ -1513,11 +1904,75 @@ function handleNotFound(requestId: string): Response {
 				"GET /health",
 				"POST /chat",
 				"POST /analyze",
+				"GET /admin/export/intake-leads",
 			],
 		},
 		requestId,
 		{ status: 404 },
 	);
+}
+
+function getBearerToken(request: Request): string | null {
+	const authorization = request.headers.get("authorization");
+	if (!authorization) {
+		return null;
+	}
+
+	const [scheme, token] = authorization.split(/\s+/, 2);
+	if (scheme?.toLowerCase() !== "bearer" || !token) {
+		return null;
+	}
+
+	return token;
+}
+
+async function handleAdminExportIntakeLeads(
+	request: Request,
+	env: Env,
+	requestId: string,
+): Promise<Response> {
+	if (!env.ADMIN_EXPORT_TOKEN) {
+		return errorResponse(
+			ROUTES.adminExportIntakeLeads,
+			503,
+			"Admin export is not configured.",
+			requestId,
+			{
+				required_env_var: "ADMIN_EXPORT_TOKEN",
+			},
+		);
+	}
+
+	if (getBearerToken(request) !== env.ADMIN_EXPORT_TOKEN) {
+		return errorResponse(
+			ROUTES.adminExportIntakeLeads,
+			401,
+			"Unauthorized.",
+			requestId,
+		);
+	}
+
+	try {
+		const result = await env.hello_ai_prod
+			.prepare(
+				[
+					"SELECT request_id, name, email, phone, business_name, location, preferred_contact, mode, created_at",
+					"FROM intake_leads",
+					"ORDER BY created_at DESC",
+				].join(" "),
+			)
+			.all<LeadExportRow>();
+
+		return csvResponse(result.results ?? [], requestId);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Unknown error";
+		return errorResponse(
+			ROUTES.adminExportIntakeLeads,
+			500,
+			message,
+			requestId,
+		);
+	}
 }
 
 export default {
@@ -1537,7 +1992,14 @@ export default {
 		}
 
 		if (request.method === "GET" && url.pathname === ROUTES.health) {
-			return handleHealth(requestId);
+			return handleHealth(requestId, env);
+		}
+
+		if (
+			request.method === "GET" &&
+			url.pathname === ROUTES.adminExportIntakeLeads
+		) {
+			return handleAdminExportIntakeLeads(request, env, requestId);
 		}
 
 		if (request.method === "POST" && url.pathname === ROUTES.chat) {
@@ -1747,6 +2209,13 @@ export default {
 					status: "success",
 					usage: raw.usage ?? null,
 				});
+				queueIntakeLead(
+					ctx,
+					env,
+					requestId,
+					getAnalyzeMode(parsedBody.body),
+					parsedBody.body.lead,
+				);
 
 				return jsonResponse({
 					ok: true,
@@ -1772,7 +2241,8 @@ export default {
 			url.pathname === ROUTES.root ||
 			url.pathname === ROUTES.health ||
 			url.pathname === ROUTES.chat ||
-			url.pathname === ROUTES.analyze
+			url.pathname === ROUTES.analyze ||
+			url.pathname === ROUTES.adminExportIntakeLeads
 		) {
 			return handleMethodNotAllowed(url.pathname, requestId);
 		}

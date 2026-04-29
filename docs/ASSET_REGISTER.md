@@ -14,6 +14,8 @@ The Worker supports intake for advisory, implementation, and licensing workflows
 
 The current intake modes cover business assets, royalty models, automation workflows, digital products/apps, content/media assets, grants/workforce programs, real estate/property systems, clothing/brand/IP assets, food or infused product R&D, and compliance/risk review.
 
+Optional lead capture supports follow-up workflows when a submitter chooses to provide contact details. Captured lead records are export-ready through a bearer-token protected CSV route when `ADMIN_EXPORT_TOKEN` is configured.
+
 ## Licensing Potential
 
 The structured intake contract can become a licensable module for founder studios, operators, agencies, and business formation workflows that need repeatable idea-to-asset planning.
@@ -25,12 +27,14 @@ The structured intake contract can become a licensable module for founder studio
 - Include attorney, tax, privacy, and compliance review before executing regulated recommendations.
 - Do not hardcode secrets or private BranchOps operating records in this repository.
 - Structured D1 logs should store request metadata, status, token usage, and error details only; do not store full idea, chat, or reply content by default.
+- `intake_leads` may contain personal contact data when submitted voluntarily; export access must stay token-protected and the token must be stored as a Cloudflare secret.
 - Basic per-IP throttling is an abuse-control guardrail, not a substitute for authenticated platform-level rate limits.
 
 ## Promotion Path Into BranchOps Platform
 
 1. Prove the public-safe intake schema through this Worker.
 2. Use `request_id` and `intake_events` to trace public-safe route behavior.
-3. Add authenticated intake capture and review queues in the internal BranchOps Platform.
-4. Promote qualified plans into asset records, task workflows, and owner dashboards.
-5. Add reporting for conversion, revenue attribution, licensing candidates, and compliance review status.
+3. Use `intake_leads` CSV export as the temporary bridge into manual review.
+4. Add authenticated intake capture and review queues in the internal BranchOps Platform.
+5. Promote qualified plans into asset records, task workflows, and owner dashboards.
+6. Add reporting for conversion, revenue attribution, licensing candidates, and compliance review status.
