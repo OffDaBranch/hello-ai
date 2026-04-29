@@ -86,20 +86,30 @@ describe("BranchOps AI Intake Worker", () => {
 		const html = await response.text();
 		expect(html).toContain("<title>BranchOps AI Intake Worker</title>");
 		expect(html).toContain("POST /chat");
+		expect(html).toContain("Dashboard");
+		expect(html).toContain("New Intake");
+		expect(html).toContain("Licensing Builder");
+		expect(html).toContain("Lead Capture");
+		expect(html).toContain("Export / Admin");
+		expect(html).toContain("System Health");
 		expect(html).toContain("General Business Asset");
 		expect(html).toContain("Licensing / Royalty Model");
 		expect(html).toContain("Automation Workflow");
 		expect(html).toContain("Digital Product / App");
 		expect(html).toContain("Content / Media Asset");
 		expect(html).toContain("Grant / Workforce Program");
-		expect(html).toContain("Real Estate / Property System");
-		expect(html).toContain("Clothing / Brand / IP Asset");
+		expect(html).toContain("Real Estate System");
+		expect(html).toContain("Brand / IP Asset");
 		expect(html).toContain("Food / Infused Product R&amp;D");
 		expect(html).toContain("Compliance / Risk Review");
 		expect(html).toContain("Optional contact info for follow-up");
 		expect(html).toContain("Business name");
 		expect(html).toContain("Preferred contact");
 		expect(html).toContain("Analyze intake");
+		expect(html).toContain("Structured results");
+		expect(html).toContain("Request ID");
+		expect(html).toContain("Throttle Guard");
+		expect(html).toContain("D1 Logging");
 	});
 
 	it("returns an explicit route map on GET /health", async () => {

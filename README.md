@@ -22,7 +22,28 @@ This repository is the public-safe same-day intake Worker for BranchOps asset pl
 | `POST` | `/analyze` | Convert a raw idea into a structured BranchOps asset plan | BranchOps planning schema |
 | `GET` | `/admin/export/intake-leads` | Export captured lead records when admin export is configured | Bearer-token protected CSV |
 
-The browser UI includes intake mode menu options for general asset planning, licensing, automation, apps, content/media, grants/workforce, real estate, clothing/brand/IP, food or infused product R&D, and compliance review.
+The browser UI is an app-style BranchOps workspace with a desktop sidebar, mobile menu behavior, structured analyzer panel, separate chat lane, lead capture panel, admin export panel, and system health panel.
+
+## UI Navigation
+
+Sidebar sections:
+
+- Dashboard
+- New Intake
+- Licensing Builder
+- Automation Planner
+- Digital Product Planner
+- Content / Media Asset
+- Grant / Workforce Program
+- Real Estate System
+- Brand / IP Asset
+- Food / Product R&D
+- Compliance Review
+- Lead Capture
+- Export / Admin
+- System Health
+
+Selecting a planner section updates the active analyzer mode and the mode description. The structured result area renders cards for the BranchOps schema fields after `/analyze` returns.
 
 ## Workflow
 

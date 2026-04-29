@@ -223,76 +223,199 @@ const CHAT_DEMO_HTML = `<!doctype html>
 	<title>BranchOps AI Intake Worker</title>
 	<style>
 		:root {
-			color-scheme: dark;
-			font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-			background: #0b0f14;
-			color: #e7edf5;
+			color-scheme: light;
+			font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+			background: #f5f7fb;
+			color: #18212f;
 		}
 		* { box-sizing: border-box; }
+		[hidden] { display: none !important; }
 		body {
 			margin: 0;
-			background: linear-gradient(180deg, #0b0f14 0%, #111827 100%);
+			min-height: 100vh;
+			background: #eef3f8;
+		}
+		button, input, select, textarea {
+			font: inherit;
+		}
+		button {
+			cursor: pointer;
+		}
+		.app-shell {
+			display: grid;
+			grid-template-columns: 292px minmax(0, 1fr);
 			min-height: 100vh;
 		}
-		.wrapper {
-			max-width: 960px;
-			margin: 0 auto;
-			padding: 24px 16px 48px;
-		}
-		.hero {
-			margin-bottom: 16px;
-		}
-		h1 {
-			margin: 0 0 8px;
-			font-size: 2rem;
-		}
-		p, li, code, textarea, button, input, select, label {
-			font-size: 0.98rem;
-		}
-		.small {
-			color: #9fb0c3;
-		}
-		.panel {
-			background: rgba(17, 24, 39, 0.92);
-			border: 1px solid rgba(148, 163, 184, 0.2);
-			border-radius: 16px;
-			padding: 16px;
-			box-shadow: 0 16px 48px rgba(0, 0, 0, 0.22);
-		}
-		.chat-log {
-			min-height: 360px;
-			max-height: 60vh;
+		.sidebar {
+			position: sticky;
+			top: 0;
+			height: 100vh;
+			padding: 18px 14px;
+			background: #111827;
+			color: #e5edf6;
 			overflow-y: auto;
-			display: flex;
-			flex-direction: column;
-			gap: 12px;
-			padding: 4px 2px 12px;
-			margin-bottom: 16px;
+			border-right: 1px solid rgba(148, 163, 184, 0.22);
 		}
-		.message {
-			padding: 12px 14px;
-			border-radius: 14px;
-			white-space: pre-wrap;
+		.brand {
+			padding: 10px 10px 18px;
+			border-bottom: 1px solid rgba(148, 163, 184, 0.22);
+			margin-bottom: 14px;
+		}
+		.brand-mark {
+			width: 40px;
+			height: 40px;
+			display: grid;
+			place-items: center;
+			border-radius: 8px;
+			background: #f8fafc;
+			color: #111827;
+			font-weight: 800;
+			margin-bottom: 10px;
+		}
+		.brand h1 {
+			font-size: 1.1rem;
+			line-height: 1.2;
+			margin: 0 0 4px;
+		}
+		.brand p, .sidebar-label {
+			margin: 0;
+			color: #9fb0c3;
+			font-size: 0.82rem;
+		}
+		.sidebar-label {
+			text-transform: uppercase;
+			letter-spacing: 0.08em;
+			padding: 12px 10px 6px;
+		}
+		.nav-group {
+			display: grid;
+			gap: 4px;
+		}
+		.nav-button {
+			width: 100%;
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 10px;
+			border: 0;
+			border-radius: 8px;
+			padding: 10px;
+			background: transparent;
+			color: #d7e1ed;
+			text-align: left;
+		}
+		.nav-button:hover,
+		.nav-button.active {
+			background: #233044;
+			color: #ffffff;
+		}
+		.nav-tag {
+			font-size: 0.72rem;
+			color: #93c5fd;
+		}
+		.mobile-topbar {
+			display: none;
+			position: sticky;
+			top: 0;
+			z-index: 20;
+			align-items: center;
+			justify-content: space-between;
+			padding: 12px 16px;
+			background: #111827;
+			color: #ffffff;
+		}
+		.menu-button {
+			border: 1px solid rgba(255, 255, 255, 0.24);
+			border-radius: 8px;
+			background: transparent;
+			color: #ffffff;
+			padding: 8px 10px;
+		}
+		.main {
+			min-width: 0;
+			padding: 24px;
+		}
+		.workspace-header {
+			display: flex;
+			align-items: flex-start;
+			justify-content: space-between;
+			gap: 18px;
+			margin-bottom: 18px;
+		}
+		.eyebrow {
+			margin: 0 0 6px;
+			font-size: 0.78rem;
+			color: #526174;
+			text-transform: uppercase;
+			letter-spacing: 0.08em;
+		}
+		h2, h3, p {
+			margin-top: 0;
+		}
+		h2 {
+			margin-bottom: 8px;
+			font-size: 1.6rem;
+			letter-spacing: 0;
+		}
+		h3 {
+			margin-bottom: 10px;
+			font-size: 1rem;
+		}
+		.muted {
+			color: #637083;
+		}
+		.status-strip {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 8px;
+			justify-content: flex-end;
+		}
+		.pill {
+			display: inline-flex;
+			align-items: center;
+			min-height: 30px;
+			border: 1px solid #d9e2ec;
+			border-radius: 8px;
+			padding: 5px 8px;
+			background: #ffffff;
+			color: #415064;
+			font-size: 0.82rem;
+		}
+		.card-grid {
+			display: grid;
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+			gap: 12px;
+			margin-bottom: 18px;
+		}
+		.card, .panel {
+			border: 1px solid #dbe3ed;
+			border-radius: 8px;
+			background: #ffffff;
+			box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
+		}
+		.card {
+			padding: 14px;
+			min-height: 112px;
+		}
+		.card-title {
+			margin: 0 0 8px;
+			font-weight: 700;
+			color: #18212f;
+		}
+		.card p {
+			margin-bottom: 0;
+			color: #637083;
 			line-height: 1.45;
 		}
-		.message.user {
-			background: rgba(59, 130, 246, 0.2);
-			border: 1px solid rgba(96, 165, 250, 0.28);
+		.panel {
+			padding: 16px;
+			margin-bottom: 18px;
 		}
-		.message.assistant {
-			background: rgba(34, 197, 94, 0.14);
-			border: 1px solid rgba(74, 222, 128, 0.22);
-		}
-		.message.system {
-			background: rgba(148, 163, 184, 0.12);
-			border: 1px solid rgba(148, 163, 184, 0.16);
-		}
-		.meta {
-			font-size: 0.8rem;
-			color: #9fb0c3;
-			margin-bottom: 6px;
-			text-transform: uppercase;
-			letter-spacing: 0.04em;
+		.two-column {
+			display: grid;
+			grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.9fr);
+			gap: 16px;
+			align-items: start;
 		}
 		form {
 			display: grid;
@@ -301,126 +424,378 @@ const CHAT_DEMO_HTML = `<!doctype html>
 		label {
 			display: grid;
 			gap: 6px;
-			color: #9fb0c3;
+			color: #4f5f73;
+			font-size: 0.92rem;
 		}
 		select, textarea, input {
 			width: 100%;
-			padding: 14px;
-			border-radius: 12px;
-			border: 1px solid rgba(148, 163, 184, 0.24);
-			background: #0f172a;
-			color: #e7edf5;
+			border: 1px solid #ced8e5;
+			border-radius: 8px;
+			background: #ffffff;
+			color: #18212f;
+			padding: 11px 12px;
+		}
+		textarea {
+			min-height: 140px;
+			resize: vertical;
+			line-height: 1.45;
+		}
+		.form-grid, .lead-grid {
+			display: grid;
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+			gap: 12px;
 		}
 		details {
-			border: 1px solid rgba(148, 163, 184, 0.2);
-			border-radius: 12px;
+			border: 1px solid #dbe3ed;
+			border-radius: 8px;
 			padding: 12px;
-			background: rgba(15, 23, 42, 0.52);
+			background: #f8fafc;
 		}
 		summary {
 			cursor: pointer;
-			color: #cbd5e1;
-		}
-		.lead-grid {
-			display: grid;
-			gap: 10px;
-			grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-			margin-top: 12px;
-		}
-		textarea {
-			min-height: 120px;
-			resize: vertical;
+			font-weight: 700;
+			color: #243044;
 		}
 		.actions {
 			display: flex;
-			gap: 12px;
 			flex-wrap: wrap;
+			gap: 10px;
 		}
-		button {
-			padding: 12px 16px;
-			border-radius: 12px;
-			border: 1px solid rgba(148, 163, 184, 0.22);
-			background: #111827;
-			color: #e7edf5;
-			cursor: pointer;
+		.primary-button, .secondary-button {
+			border-radius: 8px;
+			padding: 10px 13px;
+			border: 1px solid #cbd5e1;
 		}
-		button.primary {
-			background: #2563eb;
-			border-color: #2563eb;
+		.primary-button {
+			background: #1d4ed8;
+			border-color: #1d4ed8;
+			color: #ffffff;
 		}
-		.routes {
-			margin-top: 18px;
+		.secondary-button {
+			background: #ffffff;
+			color: #243044;
+		}
+		.result-grid {
+			display: grid;
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+			gap: 12px;
+		}
+		.result-card {
+			border: 1px solid #dbe3ed;
+			border-radius: 8px;
+			background: #f8fafc;
+			padding: 12px;
+			min-height: 104px;
+		}
+		.result-card h4 {
+			margin: 0 0 8px;
+			font-size: 0.88rem;
+			text-transform: uppercase;
+			letter-spacing: 0.06em;
+			color: #526174;
+		}
+		.result-card p,
+		.result-card li {
+			color: #243044;
+			line-height: 1.45;
+		}
+		.result-card ul {
+			margin: 0;
+			padding-left: 18px;
+		}
+		.chat-log {
+			min-height: 260px;
+			max-height: 420px;
+			overflow-y: auto;
+			display: grid;
+			align-content: start;
+			gap: 10px;
+			padding: 4px 2px 12px;
+		}
+		.message {
+			border-radius: 8px;
+			padding: 10px 12px;
+			line-height: 1.45;
+			white-space: pre-wrap;
+			background: #f1f5f9;
+		}
+		.message.user {
+			background: #e0edff;
+		}
+		.message.assistant {
+			background: #ecfdf5;
+		}
+		.meta {
+			margin-bottom: 4px;
+			color: #64748b;
+			font-size: 0.74rem;
+			text-transform: uppercase;
+			letter-spacing: 0.06em;
+		}
+		.route-list {
+			display: grid;
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+			gap: 10px;
+		}
+		.route-item {
+			border: 1px solid #dbe3ed;
+			border-radius: 8px;
+			background: #f8fafc;
+			padding: 10px;
 		}
 		code {
-			background: rgba(15, 23, 42, 0.9);
-			padding: 2px 6px;
+			background: #eef3f8;
+			border-radius: 6px;
+			padding: 2px 5px;
+		}
+		pre {
+			white-space: pre-wrap;
+			overflow: auto;
+			max-height: 360px;
+			border: 1px solid #dbe3ed;
 			border-radius: 8px;
+			background: #0f172a;
+			color: #e5edf6;
+			padding: 12px;
+		}
+		@media (max-width: 1040px) {
+			.app-shell {
+				grid-template-columns: 1fr;
+			}
+			.mobile-topbar {
+				display: flex;
+			}
+			.sidebar {
+				position: fixed;
+				z-index: 30;
+				inset: 0 auto 0 0;
+				width: min(86vw, 320px);
+				transform: translateX(-100%);
+				transition: transform 160ms ease;
+			}
+			body.sidebar-open .sidebar {
+				transform: translateX(0);
+			}
+			.main {
+				padding: 16px;
+			}
+			.two-column, .card-grid {
+				grid-template-columns: 1fr;
+			}
+			.workspace-header {
+				display: block;
+			}
+			.status-strip {
+				justify-content: flex-start;
+				margin-top: 10px;
+			}
+		}
+		@media (max-width: 640px) {
+			.form-grid, .lead-grid, .result-grid, .route-list {
+				grid-template-columns: 1fr;
+			}
+			.card {
+				min-height: 0;
+			}
 		}
 	</style>
 </head>
 <body>
-	<div class="wrapper">
-		<div class="hero">
-			<h1>BranchOps AI Intake Worker</h1>
-			<p>Cloudflare Worker for converting founder and business ideas into structured BranchOps asset plans.</p>
-			<p class="small">This browser demo stores conversation history locally and sends the rolling transcript to <code>/chat</code>.</p>
-		</div>
-
-		<div class="panel">
-			<div id="chatLog" class="chat-log"></div>
-
-			<form id="chatForm">
-				<label>
-					Intake mode
-					<select id="modeSelect">
-						<option>General Business Asset</option>
-						<option>Licensing / Royalty Model</option>
-						<option>Automation Workflow</option>
-						<option>Digital Product / App</option>
-						<option>Content / Media Asset</option>
-						<option>Grant / Workforce Program</option>
-						<option>Real Estate / Property System</option>
-						<option>Clothing / Brand / IP Asset</option>
-						<option>Food / Infused Product R&amp;D</option>
-						<option>Compliance / Risk Review</option>
-					</select>
-				</label>
-				<details>
-					<summary>Optional contact info for follow-up</summary>
-					<p class="small">Only add this if you want this intake linked to contact details. Leave it blank for an anonymous draft.</p>
-					<div class="lead-grid">
-						<label>Name<input id="leadName" autocomplete="name" /></label>
-						<label>Email<input id="leadEmail" type="email" autocomplete="email" /></label>
-						<label>Phone<input id="leadPhone" autocomplete="tel" /></label>
-						<label>Business name<input id="leadBusinessName" autocomplete="organization" /></label>
-						<label>Location<input id="leadLocation" autocomplete="address-level2" /></label>
-						<label>Preferred contact<input id="leadPreferredContact" placeholder="email, phone, text..." /></label>
-					</div>
-				</details>
-				<textarea id="messageInput" placeholder="Ask a question, test a workflow, or describe an idea..."></textarea>
-				<div class="actions">
-					<button class="primary" type="submit">Send</button>
-					<button id="analyzeBtn" type="button">Analyze intake</button>
-					<button id="clearBtn" type="button">Clear local chat</button>
-				</div>
-			</form>
-
-			<div class="routes">
-				<p class="small">API routes: <code>GET /health</code>, <code>POST /chat</code>, <code>POST /analyze</code></p>
+	<div class="mobile-topbar">
+		<strong>BranchOps AI Intake Worker</strong>
+		<button id="menuButton" class="menu-button" type="button">Menu</button>
+	</div>
+	<div class="app-shell">
+		<aside id="sidebar" class="sidebar" aria-label="BranchOps feature navigation">
+			<div class="brand">
+				<div class="brand-mark">BO</div>
+				<h1>BranchOps AI Intake Worker</h1>
+				<p>BOH-AI-INTAKE-001</p>
 			</div>
-		</div>
+			<p class="sidebar-label">Workspace</p>
+			<nav class="nav-group">
+				<button class="nav-button active" type="button" data-nav="dashboard" data-panel="dashboard">Dashboard<span class="nav-tag">Home</span></button>
+				<button class="nav-button" type="button" data-nav="new-intake" data-panel="intake" data-mode="General Business Asset">New Intake<span class="nav-tag">Analyze</span></button>
+				<button class="nav-button" type="button" data-nav="licensing" data-panel="intake" data-mode="Licensing / Royalty Model">Licensing Builder</button>
+				<button class="nav-button" type="button" data-nav="automation" data-panel="intake" data-mode="Automation Workflow">Automation Planner</button>
+				<button class="nav-button" type="button" data-nav="digital-product" data-panel="intake" data-mode="Digital Product / App">Digital Product Planner</button>
+				<button class="nav-button" type="button" data-nav="content-media" data-panel="intake" data-mode="Content / Media Asset">Content / Media Asset</button>
+				<button class="nav-button" type="button" data-nav="grant-workforce" data-panel="intake" data-mode="Grant / Workforce Program">Grant / Workforce Program</button>
+				<button class="nav-button" type="button" data-nav="real-estate" data-panel="intake" data-mode="Real Estate / Property System">Real Estate System</button>
+				<button class="nav-button" type="button" data-nav="brand-ip" data-panel="intake" data-mode="Clothing / Brand / IP Asset">Brand / IP Asset</button>
+				<button class="nav-button" type="button" data-nav="food-product" data-panel="intake" data-mode="Food / Infused Product R&amp;D">Food / Product R&amp;D</button>
+				<button class="nav-button" type="button" data-nav="compliance" data-panel="intake" data-mode="Compliance / Risk Review">Compliance Review</button>
+			</nav>
+			<p class="sidebar-label">Operations</p>
+			<nav class="nav-group">
+				<button class="nav-button" type="button" data-nav="lead-capture" data-panel="lead">Lead Capture</button>
+				<button class="nav-button" type="button" data-nav="export-admin" data-panel="admin">Export / Admin</button>
+				<button class="nav-button" type="button" data-nav="system-health" data-panel="health">System Health</button>
+			</nav>
+		</aside>
+
+		<main class="main">
+			<header class="workspace-header">
+				<div>
+					<p class="eyebrow">Branch Off Holdings LLC</p>
+					<h2 id="activeTitle">Dashboard</h2>
+					<p id="activeDescription" class="muted">A public-safe intake workspace for turning raw ideas into structured BranchOps asset plans.</p>
+				</div>
+				<div class="status-strip" aria-label="Active routes">
+					<span class="pill">GET /</span>
+					<span class="pill">POST /analyze</span>
+					<span class="pill">POST /chat</span>
+					<span class="pill">GET /health</span>
+				</div>
+			</header>
+
+			<section id="dashboardPanel" data-panel-section="dashboard">
+				<div class="card-grid">
+					<div class="card"><p class="card-title">Intake Modes</p><p>Ten BranchOps planning lanes drive the active analyzer mode.</p></div>
+					<div class="card"><p class="card-title">Lead Capture</p><p>Optional contact fields link a request ID to follow-up records.</p></div>
+					<div class="card"><p class="card-title">Export Status</p><p>CSV export stays locked unless ADMIN_EXPORT_TOKEN is configured.</p></div>
+					<div class="card"><p class="card-title">Request ID</p><p>Every JSON response carries a request_id for traceability.</p></div>
+					<div class="card"><p class="card-title">Throttle Guard</p><p>Chat and analyze requests use a simple per-route IP throttle.</p></div>
+					<div class="card"><p class="card-title">D1 Logging</p><p>Structured events and voluntary leads write to D1 without prompt storage.</p></div>
+				</div>
+				<div class="panel">
+					<h3>BranchOps schema cards</h3>
+					<div id="schemaPreview" class="result-grid" aria-label="BranchOps schema preview"></div>
+				</div>
+			</section>
+
+			<section id="intakePanel" data-panel-section="intake" hidden>
+				<div class="two-column">
+					<div class="panel">
+						<h3 id="modeTitle">New Intake</h3>
+						<p id="modeDescription" class="muted">General Business Asset turns an early idea into a structured BranchOps asset plan.</p>
+						<form id="intakeForm">
+							<label>
+								Active intake mode
+								<select id="modeSelect">
+									<option>General Business Asset</option>
+									<option>Licensing / Royalty Model</option>
+									<option>Automation Workflow</option>
+									<option>Digital Product / App</option>
+									<option>Content / Media Asset</option>
+									<option>Grant / Workforce Program</option>
+									<option>Real Estate / Property System</option>
+									<option>Clothing / Brand / IP Asset</option>
+									<option>Food / Infused Product R&amp;D</option>
+									<option>Compliance / Risk Review</option>
+								</select>
+							</label>
+							<textarea id="ideaInput" placeholder="Describe the business idea, asset, process, offer, or risk to structure..."></textarea>
+							<div class="form-grid">
+								<label>Audience<input id="audienceInput" placeholder="founders, operators, buyers..." /></label>
+								<label>Urgency<input id="urgencyInput" placeholder="same-day, this week, exploratory..." /></label>
+								<label>Budget<input id="budgetInput" placeholder="lean, pilot, funded..." /></label>
+								<label>Extra instructions<input id="instructionsInput" placeholder="optional analyst direction" /></label>
+							</div>
+							<details>
+								<summary>Optional contact info for follow-up</summary>
+								<p class="muted">Only add contact details when follow-up is wanted. Leave blank for an anonymous draft.</p>
+								<div class="lead-grid">
+									<label>Name<input id="leadName" autocomplete="name" /></label>
+									<label>Email<input id="leadEmail" type="email" autocomplete="email" /></label>
+									<label>Phone<input id="leadPhone" autocomplete="tel" /></label>
+									<label>Business name<input id="leadBusinessName" autocomplete="organization" /></label>
+									<label>Location<input id="leadLocation" autocomplete="address-level2" /></label>
+									<label>Preferred contact<input id="leadPreferredContact" placeholder="email, phone, text..." /></label>
+								</div>
+							</details>
+							<div class="actions">
+								<button class="primary-button" type="submit">Analyze intake</button>
+								<button id="clearIntakeBtn" class="secondary-button" type="button">Clear intake</button>
+							</div>
+						</form>
+					</div>
+					<div class="panel">
+						<h3>Structured results</h3>
+						<p id="requestIdLine" class="muted">Request ID appears after analysis.</p>
+						<div id="resultCards" class="result-grid"></div>
+					</div>
+				</div>
+				<div class="panel">
+					<h3>Chat lane</h3>
+					<div id="chatLog" class="chat-log"></div>
+					<form id="chatForm">
+						<textarea id="chatInput" placeholder="Ask a quick public-safe follow-up..."></textarea>
+						<div class="actions">
+							<button class="primary-button" type="submit">Send chat</button>
+							<button id="clearChatBtn" class="secondary-button" type="button">Clear chat</button>
+						</div>
+					</form>
+				</div>
+			</section>
+
+			<section id="leadPanel" data-panel-section="lead" hidden>
+				<div class="panel">
+					<h3>Lead Capture</h3>
+					<p class="muted">Lead capture is optional. Records use request_id, mode, and submitted contact fields. Full prompt content is not stored in the lead table.</p>
+					<div class="route-list">
+						<div class="route-item"><strong>Fields</strong><br />name, email, phone, business_name, location, preferred_contact</div>
+						<div class="route-item"><strong>D1 table</strong><br /><code>intake_leads</code></div>
+					</div>
+				</div>
+			</section>
+
+			<section id="adminPanel" data-panel-section="admin" hidden>
+				<div class="panel">
+					<h3>Export / Admin</h3>
+					<p class="muted">Admin export requires ADMIN_EXPORT_TOKEN. The browser does not ask for, store, or expose the token.</p>
+					<div class="route-list">
+						<div class="route-item"><strong>Route</strong><br /><code>GET /admin/export/intake-leads</code></div>
+						<div class="route-item"><strong>Auth</strong><br />Bearer token via configured environment secret</div>
+						<div class="route-item"><strong>Format</strong><br />text/csv</div>
+						<div class="route-item"><strong>Missing token</strong><br />503 admin export is not configured</div>
+					</div>
+				</div>
+			</section>
+
+			<section id="healthPanel" data-panel-section="health" hidden>
+				<div class="panel">
+					<h3>System Health</h3>
+					<div class="actions">
+						<button id="refreshHealthBtn" class="primary-button" type="button">Refresh health</button>
+					</div>
+					<pre id="healthOutput">Health data has not been loaded.</pre>
+				</div>
+			</section>
+		</main>
 	</div>
 
 	<script>
 		(function () {
-			var STORAGE_KEY = 'hello-ai-demo-history';
-			var SESSION_KEY = 'hello-ai-demo-session';
-			var chatLog = document.getElementById('chatLog');
-			var form = document.getElementById('chatForm');
-			var input = document.getElementById('messageInput');
+			var STORAGE_KEY = 'branchops-intake-chat-history';
+			var SESSION_KEY = 'branchops-intake-session';
+			var modeDetails = {
+				'General Business Asset': 'Turns an early idea into a structured BranchOps asset plan.',
+				'Licensing / Royalty Model': 'Shapes royalty, license, and reusable rights models.',
+				'Automation Workflow': 'Maps manual work into automations, systems, and triggers.',
+				'Digital Product / App': 'Frames app, tool, portal, and digital product plans.',
+				'Content / Media Asset': 'Packages media, content, channel, and audience assets.',
+				'Grant / Workforce Program': 'Structures workforce, grant, and program delivery assets.',
+				'Real Estate / Property System': 'Plans property, asset management, and real estate systems.',
+				'Clothing / Brand / IP Asset': 'Organizes brand, apparel, IP, and licensing pathways.',
+				'Food / Infused Product R&D': 'Frames product R&D, operational needs, and compliance risk.',
+				'Compliance / Risk Review': 'Surfaces legal, privacy, tax, safety, and operating risks.'
+			};
+			var activeTitle = document.getElementById('activeTitle');
+			var activeDescription = document.getElementById('activeDescription');
+			var modeTitle = document.getElementById('modeTitle');
+			var modeDescription = document.getElementById('modeDescription');
 			var modeSelect = document.getElementById('modeSelect');
-			var analyzeBtn = document.getElementById('analyzeBtn');
-			var clearBtn = document.getElementById('clearBtn');
+			var ideaInput = document.getElementById('ideaInput');
+			var audienceInput = document.getElementById('audienceInput');
+			var urgencyInput = document.getElementById('urgencyInput');
+			var budgetInput = document.getElementById('budgetInput');
+			var instructionsInput = document.getElementById('instructionsInput');
+			var resultCards = document.getElementById('resultCards');
+			var requestIdLine = document.getElementById('requestIdLine');
+			var healthOutput = document.getElementById('healthOutput');
+			var chatLog = document.getElementById('chatLog');
+			var chatInput = document.getElementById('chatInput');
 			var leadInputs = {
 				name: document.getElementById('leadName'),
 				email: document.getElementById('leadEmail'),
@@ -429,47 +804,98 @@ const CHAT_DEMO_HTML = `<!doctype html>
 				location: document.getElementById('leadLocation'),
 				preferred_contact: document.getElementById('leadPreferredContact')
 			};
-
+			var resultOrder = [
+				'objective',
+				'classification',
+				'asset',
+				'execution_plan',
+				'systems',
+				'monetization_model',
+				'automation_opportunities',
+				'legal_compliance_risks',
+				'scaling_path',
+				'long_term_value'
+			];
+			var resultLabels = {
+				objective: 'objective',
+				classification: 'classification',
+				asset: 'asset',
+				execution_plan: 'execution_plan',
+				systems: 'systems',
+				monetization_model: 'monetization_model',
+				automation_opportunities: 'automation_opportunities',
+				legal_compliance_risks: 'legal_compliance_risks',
+				scaling_path: 'scaling_path',
+				long_term_value: 'long_term_value'
+			};
 			var sessionId = localStorage.getItem(SESSION_KEY) || crypto.randomUUID();
+			var messages = loadMessages();
+
 			localStorage.setItem(SESSION_KEY, sessionId);
 
-			var messages = [];
-			try {
-				var saved = localStorage.getItem(STORAGE_KEY);
-				if (saved) {
-					messages = JSON.parse(saved);
+			function loadMessages() {
+				try {
+					var saved = localStorage.getItem(STORAGE_KEY);
+					return saved ? JSON.parse(saved) : [
+						{ role: 'assistant', content: 'BranchOps chat is ready for short follow-up questions.' }
+					];
+				} catch (error) {
+					return [
+						{ role: 'assistant', content: 'BranchOps chat is ready for short follow-up questions.' }
+					];
 				}
-			} catch (error) {
-				messages = [];
 			}
 
-			if (!Array.isArray(messages) || messages.length === 0) {
-				messages = [
-					{
-						role: 'assistant',
-						content: 'BranchOps intake is live. Describe a business idea to structure it into an asset plan.'
-					}
-				];
-				persist();
-			}
-
-			function persist() {
+			function persistMessages() {
 				localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
 			}
 
-			function render() {
+			function textOrJson(value) {
+				if (value === null || value === undefined) {
+					return '';
+				}
+				if (typeof value === 'string') {
+					return value;
+				}
+				return JSON.stringify(value, null, 2);
+			}
+
+			function renderResultCards(data) {
+				resultCards.innerHTML = '';
+				resultOrder.forEach(function (key) {
+					var card = document.createElement('article');
+					card.className = 'result-card';
+					var title = document.createElement('h4');
+					title.textContent = resultLabels[key];
+					card.appendChild(title);
+					var value = data && data[key];
+					if (Array.isArray(value)) {
+						var list = document.createElement('ul');
+						value.forEach(function (item) {
+							var li = document.createElement('li');
+							li.textContent = textOrJson(item);
+							list.appendChild(li);
+						});
+						card.appendChild(list);
+					} else {
+						var content = document.createElement('p');
+						content.textContent = textOrJson(value) || 'Pending analysis';
+						card.appendChild(content);
+					}
+					resultCards.appendChild(card);
+				});
+			}
+
+			function renderChat() {
 				chatLog.innerHTML = '';
 				messages.forEach(function (message) {
 					var wrapper = document.createElement('div');
 					wrapper.className = 'message ' + message.role;
-
 					var meta = document.createElement('div');
 					meta.className = 'meta';
 					meta.textContent = message.role;
-
 					var content = document.createElement('div');
 					content.textContent = message.content;
-
 					wrapper.appendChild(meta);
 					wrapper.appendChild(content);
 					chatLog.appendChild(wrapper);
@@ -487,111 +913,191 @@ const CHAT_DEMO_HTML = `<!doctype html>
 				}, {});
 			}
 
-			async function sendMessage(text) {
-				messages.push({ role: 'user', content: text });
-				render();
-				persist();
+			function currentMode() {
+				return modeSelect.value;
+			}
 
+			function applyMode(mode) {
+				if (mode && modeDetails[mode]) {
+					modeSelect.value = mode;
+				}
+				var selectedMode = currentMode();
+				modeTitle.textContent = selectedMode;
+				modeDescription.textContent = modeDetails[selectedMode];
+				activeTitle.textContent = selectedMode;
+				activeDescription.textContent = modeDetails[selectedMode];
+			}
+
+			function showPanel(panel, mode) {
+				document.querySelectorAll('[data-panel-section]').forEach(function (section) {
+					section.hidden = section.getAttribute('data-panel-section') !== panel;
+				});
+				document.querySelectorAll('[data-nav]').forEach(function (button) {
+					button.classList.toggle('active', button.getAttribute('data-panel') === panel && (!mode || button.getAttribute('data-mode') === mode));
+				});
+				if (panel === 'intake') {
+					applyMode(mode || currentMode());
+				} else {
+					var titleMap = {
+						dashboard: 'Dashboard',
+						lead: 'Lead Capture',
+						admin: 'Export / Admin',
+						health: 'System Health'
+					};
+					var descMap = {
+						dashboard: 'A public-safe intake workspace for turning raw ideas into structured BranchOps asset plans.',
+						lead: 'Optional follow-up fields connect request IDs to export-ready lead records.',
+						admin: 'CSV export route metadata without exposing admin credentials.',
+						health: 'Route and capability metadata from the Worker health endpoint.'
+					};
+					activeTitle.textContent = titleMap[panel];
+					activeDescription.textContent = descMap[panel];
+				}
+				if (panel === 'health') {
+					loadHealth();
+				}
+				document.body.classList.remove('sidebar-open');
+			}
+
+			async function analyzeIdea() {
+				var text = ideaInput.value.trim();
+				if (!text) {
+					return;
+				}
+				requestIdLine.textContent = 'Structuring intake...';
+				renderResultCards({});
+				try {
+					var payload = Object.assign({
+						input: text,
+						mode: currentMode()
+					}, collectLeadFields());
+					if (audienceInput.value.trim()) {
+						payload.audience = audienceInput.value.trim();
+					}
+					if (urgencyInput.value.trim()) {
+						payload.urgency = urgencyInput.value.trim();
+					}
+					if (budgetInput.value.trim()) {
+						payload.budget = budgetInput.value.trim();
+					}
+					if (instructionsInput.value.trim()) {
+						payload.instructions = instructionsInput.value.trim();
+					}
+					var response = await fetch('/analyze', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify(payload)
+					});
+					var body = await response.json();
+					if (!response.ok || !body.ok) {
+						throw new Error(body.error || 'Analyze request failed.');
+					}
+					requestIdLine.textContent = 'Request ID: ' + body.request_id;
+					renderResultCards(body.data);
+				} catch (error) {
+					requestIdLine.textContent = 'Analyze error: ' + (error && error.message ? error.message : 'Unknown error');
+				}
+			}
+
+			async function sendChat(text) {
+				messages.push({ role: 'user', content: text });
 				var pending = { role: 'assistant', content: 'Thinking...' };
 				messages.push(pending);
-				render();
-
+				renderChat();
+				persistMessages();
 				try {
 					var response = await fetch('/chat', {
 						method: 'POST',
 						headers: { 'Content-Type': 'application/json' },
 						body: JSON.stringify({
 							sessionId: sessionId,
-							instructions: 'Use intake mode: ' + modeSelect.value + '. Keep the response public-safe and asset-oriented.',
-							messages: messages.filter(function (message) {
-								return message !== pending;
-							})
+							instructions: 'Use intake mode: ' + currentMode() + '. Keep the response public-safe and asset-oriented.',
+							messages: messages.filter(function (message) { return message !== pending; })
 						})
 					});
-
-					var payload = await response.json();
-
-					if (!response.ok || !payload.ok) {
-						throw new Error(payload.error || 'Request failed.');
+					var body = await response.json();
+					if (!response.ok || !body.ok) {
+						throw new Error(body.error || 'Chat request failed.');
 					}
-
-					sessionId = payload.sessionId || sessionId;
+					sessionId = body.sessionId || sessionId;
 					localStorage.setItem(SESSION_KEY, sessionId);
-					pending.content = payload.reply || 'No reply returned.';
+					pending.content = body.reply || 'No reply returned.';
 				} catch (error) {
 					pending.content = 'Error: ' + (error && error.message ? error.message : 'Unknown error');
 				}
-
-				render();
-				persist();
+				renderChat();
+				persistMessages();
 			}
 
-			async function analyzeMessage(text) {
-				var pending = { role: 'assistant', content: 'Structuring intake...' };
-				messages.push({ role: 'user', content: text });
-				messages.push(pending);
-				render();
-				persist();
-
+			async function loadHealth() {
+				healthOutput.textContent = 'Loading health...';
 				try {
-					var response = await fetch('/analyze', {
-						method: 'POST',
-						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify(Object.assign({
-							input: text,
-							mode: modeSelect.value
-						}, collectLeadFields()))
-					});
-
-					var payload = await response.json();
-					if (!response.ok || !payload.ok) {
-						throw new Error(payload.error || 'Analyze request failed.');
-					}
-
-					pending.content = JSON.stringify(payload.data, null, 2);
+					var response = await fetch('/health');
+					var body = await response.json();
+					healthOutput.textContent = JSON.stringify(body, null, 2);
 				} catch (error) {
-					pending.content = 'Error: ' + (error && error.message ? error.message : 'Unknown error');
+					healthOutput.textContent = 'Health request failed: ' + (error && error.message ? error.message : 'Unknown error');
 				}
-
-				render();
-				persist();
 			}
 
-			form.addEventListener('submit', function (event) {
+			document.querySelectorAll('[data-nav]').forEach(function (button) {
+				button.addEventListener('click', function () {
+					showPanel(button.getAttribute('data-panel'), button.getAttribute('data-mode'));
+				});
+			});
+
+			document.getElementById('menuButton').addEventListener('click', function () {
+				document.body.classList.toggle('sidebar-open');
+			});
+
+			document.getElementById('intakeForm').addEventListener('submit', function (event) {
 				event.preventDefault();
-				var text = input.value.trim();
+				analyzeIdea();
+			});
+
+			document.getElementById('clearIntakeBtn').addEventListener('click', function () {
+				ideaInput.value = '';
+				audienceInput.value = '';
+				urgencyInput.value = '';
+				budgetInput.value = '';
+				instructionsInput.value = '';
+				Object.keys(leadInputs).forEach(function (key) {
+					leadInputs[key].value = '';
+				});
+				requestIdLine.textContent = 'Request ID appears after analysis.';
+				renderResultCards({});
+			});
+
+			document.getElementById('chatForm').addEventListener('submit', function (event) {
+				event.preventDefault();
+				var text = chatInput.value.trim();
 				if (!text) {
 					return;
 				}
-				input.value = '';
-				sendMessage(text);
+				chatInput.value = '';
+				sendChat(text);
 			});
 
-			clearBtn.addEventListener('click', function () {
+			document.getElementById('clearChatBtn').addEventListener('click', function () {
 				localStorage.removeItem(STORAGE_KEY);
 				localStorage.removeItem(SESSION_KEY);
 				sessionId = crypto.randomUUID();
 				localStorage.setItem(SESSION_KEY, sessionId);
 				messages = [
-					{
-						role: 'assistant',
-						content: 'Local chat cleared. Start a new conversation.'
-					}
+					{ role: 'assistant', content: 'Chat cleared. Ask a short follow-up when ready.' }
 				];
-				persist();
-				render();
+				renderChat();
+				persistMessages();
 			});
 
-			analyzeBtn.addEventListener('click', function () {
-				var text = input.value.trim();
-				if (!text) {
-					return;
-				}
-				input.value = '';
-				analyzeMessage(text);
+			document.getElementById('refreshHealthBtn').addEventListener('click', loadHealth);
+
+			modeSelect.addEventListener('change', function () {
+				applyMode(currentMode());
 			});
 
-			render();
+			renderResultCards({});
+			renderChat();
 		})();
 	</script>
 </body>
