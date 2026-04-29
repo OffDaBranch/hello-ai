@@ -34,7 +34,16 @@ Use the local Wrangler URL to inspect:
 - `POST /chat`
 - `POST /analyze`
 
-The browser page should show the BranchOps intake mode menu and an optional contact info section. `/chat` and `/analyze` JSON responses should include `request_id`.
+The browser page should show the BranchOps sidebar navigation, app dashboard, structured intake form, separate chat lane, optional contact info section, export/admin panel, and system health panel. `/chat` and `/analyze` JSON responses should include `request_id`.
+
+Manual UI checks:
+
+- Desktop shows a left sidebar with Dashboard, New Intake, Licensing Builder, Lead Capture, Export / Admin, and System Health.
+- Mobile width shows the Menu button and opens the same feature navigation.
+- Planner navigation changes the active analyzer mode text.
+- Analyze intake renders result cards for objective, classification, asset, execution_plan, systems, monetization_model, automation_opportunities, legal_compliance_risks, scaling_path, and long_term_value.
+- System Health fetches `/health` without requiring secrets.
+- Export / Admin shows route and token configuration status without asking for a token.
 
 ## Validation
 
@@ -107,7 +116,7 @@ git status
 
 ```powershell
 git add README.md docs/CODEX_OPERATOR_SOP.md docs/ASSET_REGISTER.md schema.sql src/index.ts test/index.spec.ts
-git commit -m "Add intake lead capture and export"
+git commit -m "Add BranchOps sidebar feature navigation"
 ```
 
 5. Push the active branch:

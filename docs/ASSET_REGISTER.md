@@ -16,6 +16,8 @@ The current intake modes cover business assets, royalty models, automation workf
 
 Optional lead capture supports follow-up workflows when a submitter chooses to provide contact details. Captured lead records are export-ready through a bearer-token protected CSV route when `ADMIN_EXPORT_TOKEN` is configured.
 
+The browser surface now presents the asset as an app-style BranchOps workspace with visible feature navigation, planner modes, result cards, lead capture, export/admin status, and health visibility.
+
 ## Licensing Potential
 
 The structured intake contract can become a licensable module for founder studios, operators, agencies, and business formation workflows that need repeatable idea-to-asset planning.
@@ -35,6 +37,7 @@ The structured intake contract can become a licensable module for founder studio
 1. Prove the public-safe intake schema through this Worker.
 2. Use `request_id` and `intake_events` to trace public-safe route behavior.
 3. Use `intake_leads` CSV export as the temporary bridge into manual review.
-4. Add authenticated intake capture and review queues in the internal BranchOps Platform.
-5. Promote qualified plans into asset records, task workflows, and owner dashboards.
-6. Add reporting for conversion, revenue attribution, licensing candidates, and compliance review status.
+4. Use the sidebar workspace as the public-safe preview of future BranchOps Platform navigation.
+5. Add authenticated intake capture and review queues in the internal BranchOps Platform.
+6. Promote qualified plans into asset records, task workflows, and owner dashboards.
+7. Add reporting for conversion, revenue attribution, licensing candidates, and compliance review status.
