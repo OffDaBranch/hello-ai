@@ -48,12 +48,20 @@ type ChatRequestBody = {
 
 type AnalyzeRequestBody = {
 	input?: string;
+	mode?: string;
+	audience?: string;
+	urgency?: string;
+	budget?: string;
 	instructions?: string;
 	max_tokens?: number;
 };
 
 type ValidatedAnalyzeRequestBody = {
 	input: string;
+	mode?: string;
+	audience?: string;
+	urgency?: string;
+	budget?: string;
 	instructions?: string;
 	max_tokens?: number;
 };
@@ -96,7 +104,27 @@ const ROUTES = {
 	analyze: "/analyze",
 } as const;
 const REQUEST_CONTENT_TYPE = "application/json";
-const ANALYZE_ALLOWED_REQUEST_FIELDS = ["input", "instructions", "max_tokens"] as const;
+const INTAKE_MODES = [
+	"General Business Asset",
+	"Licensing / Royalty Model",
+	"Automation Workflow",
+	"Digital Product / App",
+	"Content / Media Asset",
+	"Grant / Workforce Program",
+	"Real Estate / Property System",
+	"Clothing / Brand / IP Asset",
+	"Food / Infused Product R&D",
+	"Compliance / Risk Review",
+] as const;
+const ANALYZE_ALLOWED_REQUEST_FIELDS = [
+	"input",
+	"mode",
+	"audience",
+	"urgency",
+	"budget",
+	"instructions",
+	"max_tokens",
+] as const;
 const CHAT_ALLOWED_REQUEST_FIELDS = [
 	"sessionId",
 	"messages",
@@ -107,9 +135,33 @@ const CHAT_ALLOWED_REQUEST_FIELDS = [
 ] as const;
 const MAX_INPUT_CHARS = 8000;
 const MAX_INSTRUCTIONS_CHARS = 2000;
+const MAX_CONTEXT_FIELD_CHARS = 200;
 const DEFAULT_MAX_TOKENS = 700;
 const MAX_ALLOWED_TOKENS = 700;
 const MAX_CHAT_TEMPERATURE = 2;
+const THROTTLE_LIMIT = 30;
+const THROTTLE_WINDOW_MS = 60 * 1000;
+const THROTTLE_WINDOW_SECONDS = THROTTLE_WINDOW_MS / 1000;
+
+type ThrottleBucket = {
+	windowStartMs: number;
+	count: number;
+};
+
+type IntakeEventStatus = "success" | "error" | "throttled";
+
+type IntakeEvent = {
+	requestId: string;
+	route: string;
+	mode?: string;
+	status: IntakeEventStatus;
+	timestamp: string;
+	usage?: Record<string, unknown> | null;
+	errorCode?: string;
+	errorMessage?: string;
+};
+
+const throttleBuckets = new Map<string, ThrottleBucket>();
 
 const DEFAULT_ANALYZE_INSTRUCTIONS =
 	"Return valid JSON only with keys: objective, classification, asset, execution_plan, systems, monetization_model, automation_opportunities, legal_compliance_risks, scaling_path, long_term_value. Type rules: objective, classification, and long_term_value must be strings; asset and monetization_model must be objects; execution_plan, systems, automation_opportunities, legal_compliance_risks, and scaling_path must be arrays of strings. Build the response for BranchOps asset planning: convert raw founder/business ideas into a same-day structured asset plan owned by Branch Off Holdings LLC. Do not include Markdown or commentary.";
@@ -156,7 +208,7 @@ const CHAT_DEMO_HTML = `<!doctype html>
 			margin: 0 0 8px;
 			font-size: 2rem;
 		}
-		p, li, code, textarea, button, input {
+		p, li, code, textarea, button, input, select, label {
 			font-size: 0.98rem;
 		}
 		.small {
@@ -208,15 +260,22 @@ const CHAT_DEMO_HTML = `<!doctype html>
 			display: grid;
 			gap: 12px;
 		}
-		textarea {
+		label {
+			display: grid;
+			gap: 6px;
+			color: #9fb0c3;
+		}
+		select, textarea {
 			width: 100%;
-			min-height: 120px;
-			resize: vertical;
 			padding: 14px;
 			border-radius: 12px;
 			border: 1px solid rgba(148, 163, 184, 0.24);
 			background: #0f172a;
 			color: #e7edf5;
+		}
+		textarea {
+			min-height: 120px;
+			resize: vertical;
 		}
 		.actions {
 			display: flex;
@@ -257,6 +316,21 @@ const CHAT_DEMO_HTML = `<!doctype html>
 			<div id="chatLog" class="chat-log"></div>
 
 			<form id="chatForm">
+				<label>
+					Intake mode
+					<select id="modeSelect">
+						<option>General Business Asset</option>
+						<option>Licensing / Royalty Model</option>
+						<option>Automation Workflow</option>
+						<option>Digital Product / App</option>
+						<option>Content / Media Asset</option>
+						<option>Grant / Workforce Program</option>
+						<option>Real Estate / Property System</option>
+						<option>Clothing / Brand / IP Asset</option>
+						<option>Food / Infused Product R&amp;D</option>
+						<option>Compliance / Risk Review</option>
+					</select>
+				</label>
 				<textarea id="messageInput" placeholder="Ask a question, test a workflow, or describe an idea..."></textarea>
 				<div class="actions">
 					<button class="primary" type="submit">Send</button>
@@ -277,6 +351,7 @@ const CHAT_DEMO_HTML = `<!doctype html>
 			var chatLog = document.getElementById('chatLog');
 			var form = document.getElementById('chatForm');
 			var input = document.getElementById('messageInput');
+			var modeSelect = document.getElementById('modeSelect');
 			var clearBtn = document.getElementById('clearBtn');
 
 			var sessionId = localStorage.getItem(SESSION_KEY) || crypto.randomUUID();
@@ -341,6 +416,7 @@ const CHAT_DEMO_HTML = `<!doctype html>
 						headers: { 'Content-Type': 'application/json' },
 						body: JSON.stringify({
 							sessionId: sessionId,
+							instructions: 'Use intake mode: ' + modeSelect.value + '. Keep the response public-safe and asset-oriented.',
 							messages: messages.filter(function (message) {
 								return message !== pending;
 							})
@@ -643,6 +719,121 @@ function getSessionId(value: string | undefined): string {
 	return value ?? crypto.randomUUID();
 }
 
+function createRequestId(): string {
+	if (typeof crypto.randomUUID === "function") {
+		return crypto.randomUUID();
+	}
+
+	return `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+}
+
+function getClientIp(request: Request): string {
+	const forwardedFor = request.headers.get("x-forwarded-for");
+	const forwardedIp = forwardedFor?.split(",")[0]?.trim();
+
+	return (
+		request.headers.get("cf-connecting-ip")?.trim() ||
+		forwardedIp ||
+		request.headers.get("x-real-ip")?.trim() ||
+		"unknown"
+	);
+}
+
+function checkThrottle(
+	request: Request,
+	route: string,
+): { ok: true } | { ok: false; retryAfterSeconds: number } {
+	const now = Date.now();
+	const key = `${route}:${getClientIp(request)}`;
+	const existing = throttleBuckets.get(key);
+
+	for (const [bucketKey, bucket] of throttleBuckets.entries()) {
+		if (now - bucket.windowStartMs >= THROTTLE_WINDOW_MS) {
+			throttleBuckets.delete(bucketKey);
+		}
+	}
+
+	if (!existing || now - existing.windowStartMs >= THROTTLE_WINDOW_MS) {
+		throttleBuckets.set(key, { windowStartMs: now, count: 1 });
+		return { ok: true };
+	}
+
+	if (existing.count >= THROTTLE_LIMIT) {
+		return {
+			ok: false,
+			retryAfterSeconds: Math.max(
+				1,
+				Math.ceil((THROTTLE_WINDOW_MS - (now - existing.windowStartMs)) / 1000),
+			),
+		};
+	}
+
+	existing.count += 1;
+	return { ok: true };
+}
+
+async function persistIntakeEvent(env: Env, event: IntakeEvent): Promise<void> {
+	try {
+		await env.hello_ai_prod.batch([
+			env.hello_ai_prod
+				.prepare(
+					[
+						"INSERT INTO intake_events",
+						"(request_id, route, mode, status, timestamp, token_usage, error_code, error_message)",
+						"VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+					].join(" "),
+				)
+				.bind(
+					event.requestId,
+					event.route,
+					event.mode ?? null,
+					event.status,
+					event.timestamp,
+					event.usage ? JSON.stringify(event.usage) : null,
+					event.errorCode ?? null,
+					event.errorMessage ?? null,
+				),
+		]);
+	} catch (error) {
+		console.error("Failed to persist intake event.", error);
+	}
+}
+
+function queueIntakeEvent(
+	ctx: ExecutionContext,
+	env: Env,
+	event: Omit<IntakeEvent, "timestamp">,
+): void {
+	ctx.waitUntil(
+		persistIntakeEvent(env, {
+			...event,
+			timestamp: new Date().toISOString(),
+		}),
+	);
+}
+
+function getAnalyzeMode(body: Pick<ValidatedAnalyzeRequestBody, "mode">): string {
+	return body.mode ?? "General Business Asset";
+}
+
+function buildAnalyzeInput(body: ValidatedAnalyzeRequestBody): string {
+	const context = [
+		["Mode", body.mode],
+		["Audience", body.audience],
+		["Urgency", body.urgency],
+		["Budget", body.budget],
+	]
+		.filter(([, value]) => value)
+		.map(([label, value]) => `${label}: ${value}`)
+		.join("\n");
+
+	if (!context) {
+		return body.input;
+	}
+
+	return `${context}\n\nRaw idea:\n${body.input}`;
+}
+
 async function persistChatMessages(
 	env: Env,
 	sessionId: string,
@@ -677,13 +868,21 @@ function corsHeaders(): HeadersInit {
 	};
 }
 
-function jsonResponse(body: unknown, init?: ResponseInit): Response {
+function jsonResponse(
+	body: unknown,
+	requestId: string,
+	init?: ResponseInit,
+): Response {
 	const headers = new Headers(init?.headers);
 	for (const [key, value] of Object.entries(corsHeaders())) {
 		headers.set(key, value);
 	}
 	headers.set("Content-Type", "application/json; charset=utf-8");
-	return new Response(JSON.stringify(body, null, 2), {
+	const payload = isRecord(body)
+		? { ...body, request_id: requestId }
+		: { data: body, request_id: requestId };
+
+	return new Response(JSON.stringify(payload, null, 2), {
 		...init,
 		headers,
 	});
@@ -705,9 +904,10 @@ function errorResponse(
 	route: string,
 	status: number,
 	error: string,
+	requestId: string,
 	extra: Record<string, unknown> = {},
 ): Response {
-	return jsonResponse({ ok: false, error, route, ...extra }, { status });
+	return jsonResponse({ ok: false, error, route, ...extra }, requestId, { status });
 }
 
 async function readJson<T>(request: Request): Promise<T> {
@@ -717,6 +917,7 @@ async function readJson<T>(request: Request): Promise<T> {
 async function parseJsonObject(
 	request: Request,
 	route: string,
+	requestId: string,
 ): Promise<
 	{ ok: true; body: Record<string, unknown> } | { ok: false; response: Response }
 > {
@@ -724,9 +925,15 @@ async function parseJsonObject(
 	if (!contentType || !contentType.toLowerCase().includes(REQUEST_CONTENT_TYPE)) {
 		return {
 			ok: false,
-			response: errorResponse(route, 415, "Unsupported media type.", {
-				expected_content_type: REQUEST_CONTENT_TYPE,
-			}),
+			response: errorResponse(
+				route,
+				415,
+				"Unsupported media type.",
+				requestId,
+				{
+					expected_content_type: REQUEST_CONTENT_TYPE,
+				},
+			),
 		};
 	}
 
@@ -737,14 +944,19 @@ async function parseJsonObject(
 	} catch {
 		return {
 			ok: false,
-			response: errorResponse(route, 400, "Invalid JSON body."),
+			response: errorResponse(route, 400, "Invalid JSON body.", requestId),
 		};
 	}
 
 	if (!isRecord(body)) {
 		return {
 			ok: false,
-			response: errorResponse(route, 400, "Request body must be a JSON object."),
+			response: errorResponse(
+				route,
+				400,
+				"Request body must be a JSON object.",
+				requestId,
+			),
 		};
 	}
 
@@ -761,13 +973,14 @@ function getUnsupportedFields(
 function validateInput(
 	value: unknown,
 	route: string,
+	requestId: string,
 	required = true,
 ): { ok: true; value?: string } | { ok: false; response: Response } {
 	if (value === undefined) {
 		if (required) {
 			return {
 				ok: false,
-				response: errorResponse(route, 400, "Missing 'input'."),
+				response: errorResponse(route, 400, "Missing 'input'.", requestId),
 			};
 		}
 
@@ -778,7 +991,7 @@ function validateInput(
 	if (!input) {
 		return {
 			ok: false,
-			response: errorResponse(route, 400, "Missing 'input'."),
+			response: errorResponse(route, 400, "Missing 'input'.", requestId),
 		};
 	}
 
@@ -789,6 +1002,7 @@ function validateInput(
 				route,
 				400,
 				`'input' exceeds ${MAX_INPUT_CHARS} characters.`,
+				requestId,
 			),
 		};
 	}
@@ -799,6 +1013,7 @@ function validateInput(
 function validateInstructions(
 	value: unknown,
 	route: string,
+	requestId: string,
 ): { ok: true; value?: string } | { ok: false; response: Response } {
 	if (value === undefined) {
 		return { ok: true, value: undefined };
@@ -812,6 +1027,7 @@ function validateInstructions(
 				route,
 				400,
 				"'instructions' must be a non-empty string when provided.",
+				requestId,
 			),
 		};
 	}
@@ -823,6 +1039,7 @@ function validateInstructions(
 				route,
 				400,
 				`'instructions' exceeds ${MAX_INSTRUCTIONS_CHARS} characters.`,
+				requestId,
 			),
 		};
 	}
@@ -830,9 +1047,48 @@ function validateInstructions(
 	return { ok: true, value: instructions };
 }
 
+function validateOptionalContextField(
+	value: unknown,
+	fieldName: string,
+	route: string,
+	requestId: string,
+): { ok: true; value?: string } | { ok: false; response: Response } {
+	if (value === undefined) {
+		return { ok: true, value: undefined };
+	}
+
+	const text = normalizeString(value);
+	if (!text) {
+		return {
+			ok: false,
+			response: errorResponse(
+				route,
+				400,
+				`'${fieldName}' must be a non-empty string when provided.`,
+				requestId,
+			),
+		};
+	}
+
+	if (text.length > MAX_CONTEXT_FIELD_CHARS) {
+		return {
+			ok: false,
+			response: errorResponse(
+				route,
+				400,
+				`'${fieldName}' exceeds ${MAX_CONTEXT_FIELD_CHARS} characters.`,
+				requestId,
+			),
+		};
+	}
+
+	return { ok: true, value: text };
+}
+
 function validateMaxTokens(
 	value: unknown,
 	route: string,
+	requestId: string,
 ): { ok: true; value?: number } | { ok: false; response: Response } {
 	if (value === undefined) {
 		return { ok: true, value: undefined };
@@ -845,6 +1101,7 @@ function validateMaxTokens(
 				route,
 				400,
 				"'max_tokens' must be an integer when provided.",
+				requestId,
 			),
 		};
 	}
@@ -856,6 +1113,7 @@ function validateMaxTokens(
 				route,
 				400,
 				`'max_tokens' must be between 1 and ${MAX_ALLOWED_TOKENS}.`,
+				requestId,
 			),
 		};
 	}
@@ -866,6 +1124,7 @@ function validateMaxTokens(
 function validateTemperature(
 	value: unknown,
 	route: string,
+	requestId: string,
 ): { ok: true; value?: number } | { ok: false; response: Response } {
 	if (value === undefined) {
 		return { ok: true, value: undefined };
@@ -878,6 +1137,7 @@ function validateTemperature(
 				route,
 				400,
 				"'temperature' must be a number when provided.",
+				requestId,
 			),
 		};
 	}
@@ -889,6 +1149,7 @@ function validateTemperature(
 				route,
 				400,
 				`'temperature' must be between 0 and ${MAX_CHAT_TEMPERATURE}.`,
+				requestId,
 			),
 		};
 	}
@@ -899,6 +1160,7 @@ function validateTemperature(
 function validateSessionId(
 	value: unknown,
 	route: string,
+	requestId: string,
 ): { ok: true; value?: string } | { ok: false; response: Response } {
 	if (value === undefined) {
 		return { ok: true, value: undefined };
@@ -912,6 +1174,7 @@ function validateSessionId(
 				route,
 				400,
 				"'sessionId' must be a non-empty string when provided.",
+				requestId,
 			),
 		};
 	}
@@ -921,10 +1184,11 @@ function validateSessionId(
 
 async function parseAnalyzeRequestBody(
 	request: Request,
+	requestId: string,
 ): Promise<
 	{ ok: true; body: ValidatedAnalyzeRequestBody } | { ok: false; response: Response }
 > {
-	const parsed = await parseJsonObject(request, ROUTES.analyze);
+	const parsed = await parseJsonObject(request, ROUTES.analyze, requestId);
 	if (!parsed.ok) {
 		return parsed;
 	}
@@ -936,26 +1200,77 @@ async function parseAnalyzeRequestBody(
 	if (unsupportedFields.length > 0) {
 		return {
 			ok: false,
-			response: errorResponse(ROUTES.analyze, 400, "Unsupported request fields.", {
-				unsupported_fields: unsupportedFields,
-			}),
+			response: errorResponse(
+				ROUTES.analyze,
+				400,
+				"Unsupported request fields.",
+				requestId,
+				{
+					unsupported_fields: unsupportedFields,
+				},
+			),
 		};
 	}
 
-	const input = validateInput(parsed.body.input, ROUTES.analyze);
+	const input = validateInput(parsed.body.input, ROUTES.analyze, requestId);
 	if (!input.ok) {
 		return input;
+	}
+
+	const mode = validateOptionalContextField(
+		parsed.body.mode,
+		"mode",
+		ROUTES.analyze,
+		requestId,
+	);
+	if (!mode.ok) {
+		return mode;
+	}
+
+	const audience = validateOptionalContextField(
+		parsed.body.audience,
+		"audience",
+		ROUTES.analyze,
+		requestId,
+	);
+	if (!audience.ok) {
+		return audience;
+	}
+
+	const urgency = validateOptionalContextField(
+		parsed.body.urgency,
+		"urgency",
+		ROUTES.analyze,
+		requestId,
+	);
+	if (!urgency.ok) {
+		return urgency;
+	}
+
+	const budget = validateOptionalContextField(
+		parsed.body.budget,
+		"budget",
+		ROUTES.analyze,
+		requestId,
+	);
+	if (!budget.ok) {
+		return budget;
 	}
 
 	const instructions = validateInstructions(
 		parsed.body.instructions,
 		ROUTES.analyze,
+		requestId,
 	);
 	if (!instructions.ok) {
 		return instructions;
 	}
 
-	const maxTokens = validateMaxTokens(parsed.body.max_tokens, ROUTES.analyze);
+	const maxTokens = validateMaxTokens(
+		parsed.body.max_tokens,
+		ROUTES.analyze,
+		requestId,
+	);
 	if (!maxTokens.ok) {
 		return maxTokens;
 	}
@@ -964,6 +1279,10 @@ async function parseAnalyzeRequestBody(
 		ok: true,
 		body: {
 			input: input.value!,
+			mode: mode.value,
+			audience: audience.value,
+			urgency: urgency.value,
+			budget: budget.value,
 			instructions: instructions.value,
 			max_tokens: maxTokens.value,
 		},
@@ -972,10 +1291,11 @@ async function parseAnalyzeRequestBody(
 
 async function parseChatRequestBody(
 	request: Request,
+	requestId: string,
 ): Promise<
 	{ ok: true; body: ValidatedChatRequestBody } | { ok: false; response: Response }
 > {
-	const parsed = await parseJsonObject(request, ROUTES.chat);
+	const parsed = await parseJsonObject(request, ROUTES.chat, requestId);
 	if (!parsed.ok) {
 		return parsed;
 	}
@@ -984,34 +1304,61 @@ async function parseChatRequestBody(
 	if (unsupportedFields.length > 0) {
 		return {
 			ok: false,
-			response: errorResponse(ROUTES.chat, 400, "Unsupported request fields.", {
-				unsupported_fields: unsupportedFields,
-			}),
+			response: errorResponse(
+				ROUTES.chat,
+				400,
+				"Unsupported request fields.",
+				requestId,
+				{
+					unsupported_fields: unsupportedFields,
+				},
+			),
 		};
 	}
 
-	const sessionId = validateSessionId(parsed.body.sessionId, ROUTES.chat);
+	const sessionId = validateSessionId(
+		parsed.body.sessionId,
+		ROUTES.chat,
+		requestId,
+	);
 	if (!sessionId.ok) {
 		return sessionId;
 	}
 
-	const instructions = validateInstructions(parsed.body.instructions, ROUTES.chat);
+	const instructions = validateInstructions(
+		parsed.body.instructions,
+		ROUTES.chat,
+		requestId,
+	);
 	if (!instructions.ok) {
 		return instructions;
 	}
 
-	const maxTokens = validateMaxTokens(parsed.body.max_tokens, ROUTES.chat);
+	const maxTokens = validateMaxTokens(
+		parsed.body.max_tokens,
+		ROUTES.chat,
+		requestId,
+	);
 	if (!maxTokens.ok) {
 		return maxTokens;
 	}
 
-	const temperature = validateTemperature(parsed.body.temperature, ROUTES.chat);
+	const temperature = validateTemperature(
+		parsed.body.temperature,
+		ROUTES.chat,
+		requestId,
+	);
 	if (!temperature.ok) {
 		return temperature;
 	}
 
 	const sanitizedMessages = sanitizeMessages(parsed.body.messages);
-	const fallbackInput = validateInput(parsed.body.input, ROUTES.chat, false);
+	const fallbackInput = validateInput(
+		parsed.body.input,
+		ROUTES.chat,
+		requestId,
+		false,
+	);
 	if (!fallbackInput.ok) {
 		return fallbackInput;
 	}
@@ -1026,7 +1373,12 @@ async function parseChatRequestBody(
 	if (messages.length === 0) {
 		return {
 			ok: false,
-			response: errorResponse(ROUTES.chat, 400, "Missing 'messages' or 'input'."),
+			response: errorResponse(
+				ROUTES.chat,
+				400,
+				"Missing 'messages' or 'input'.",
+				requestId,
+			),
 		};
 	}
 
@@ -1042,7 +1394,7 @@ async function parseChatRequestBody(
 	};
 }
 
-function handleHealth(): Response {
+function handleHealth(requestId: string): Response {
 	return jsonResponse({
 		ok: true,
 		status: "ok",
@@ -1097,9 +1449,18 @@ function handleHealth(): Response {
 			analyze: {
 				content_type: REQUEST_CONTENT_TYPE,
 				required_fields: ["input"],
-				optional_fields: ["instructions", "max_tokens"],
+				optional_fields: [
+					"mode",
+					"audience",
+					"urgency",
+					"budget",
+					"instructions",
+					"max_tokens",
+				],
+				intake_modes: INTAKE_MODES,
 				limits: {
 					input_max_chars: MAX_INPUT_CHARS,
+					context_field_max_chars: MAX_CONTEXT_FIELD_CHARS,
 					instructions_max_chars: MAX_INSTRUCTIONS_CHARS,
 					max_tokens_default: DEFAULT_MAX_TOKENS,
 					max_tokens_max: MAX_ALLOWED_TOKENS,
@@ -1122,16 +1483,27 @@ function handleHealth(): Response {
 			bindings: ["AI", "hello_ai_prod"],
 			vars: [],
 		},
-	});
+		throttle: {
+			routes: [ROUTES.chat, ROUTES.analyze],
+			limit: THROTTLE_LIMIT,
+			window_seconds: THROTTLE_WINDOW_SECONDS,
+			key: "client IP when available",
+		},
+	}, requestId);
 }
 
-function handleMethodNotAllowed(pathname: string): Response {
+function handleMethodNotAllowed(pathname: string, requestId: string): Response {
 	const allowedMethod =
 		pathname === ROUTES.root || pathname === ROUTES.health ? "GET" : "POST";
-	return errorResponse(pathname, 405, `Method not allowed. Use ${allowedMethod}.`);
+	return errorResponse(
+		pathname,
+		405,
+		`Method not allowed. Use ${allowedMethod}.`,
+		requestId,
+	);
 }
 
-function handleNotFound(): Response {
+function handleNotFound(requestId: string): Response {
 	return jsonResponse(
 		{
 			ok: false,
@@ -1143,13 +1515,15 @@ function handleNotFound(): Response {
 				"POST /analyze",
 			],
 		},
+		requestId,
 		{ status: 404 },
 	);
 }
 
 export default {
-	async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		const url = new URL(request.url);
+		const requestId = createRequestId();
 
 		if (request.method === "OPTIONS") {
 			return new Response(null, {
@@ -1163,12 +1537,45 @@ export default {
 		}
 
 		if (request.method === "GET" && url.pathname === ROUTES.health) {
-			return handleHealth();
+			return handleHealth(requestId);
 		}
 
 		if (request.method === "POST" && url.pathname === ROUTES.chat) {
-			const parsedBody = await parseChatRequestBody(request);
+			const throttle = checkThrottle(request, ROUTES.chat);
+			if (!throttle.ok) {
+				queueIntakeEvent(ctx, env, {
+					requestId,
+					route: ROUTES.chat,
+					mode: "chat",
+					status: "throttled",
+					errorCode: "429",
+					errorMessage: "Rate limit exceeded.",
+				});
+				return errorResponse(
+					ROUTES.chat,
+					429,
+					"Rate limit exceeded.",
+					requestId,
+					{
+						retry_after_seconds: throttle.retryAfterSeconds,
+						throttle: {
+							limit: THROTTLE_LIMIT,
+							window_seconds: THROTTLE_WINDOW_SECONDS,
+						},
+					},
+				);
+			}
+
+			const parsedBody = await parseChatRequestBody(request, requestId);
 			if (!parsedBody.ok) {
+				queueIntakeEvent(ctx, env, {
+					requestId,
+					route: ROUTES.chat,
+					mode: "chat",
+					status: "error",
+					errorCode: String(parsedBody.response.status),
+					errorMessage: "Request validation failed.",
+				});
 				return parsedBody.response;
 			}
 
@@ -1182,10 +1589,20 @@ export default {
 
 				const reply = getModelText(raw);
 				if (!reply) {
+					queueIntakeEvent(ctx, env, {
+						requestId,
+						route: ROUTES.chat,
+						mode: "chat",
+						status: "error",
+						usage: raw.usage ?? null,
+						errorCode: "502",
+						errorMessage: "Model returned no usable chat text.",
+					});
 					return errorResponse(
 						ROUTES.chat,
 						502,
 						"Model returned no usable chat text.",
+						requestId,
 						{ model: MODEL },
 					);
 				}
@@ -1198,22 +1615,69 @@ export default {
 					console.error("Failed to persist chat transcript.", error);
 				}
 
+				queueIntakeEvent(ctx, env, {
+					requestId,
+					route: ROUTES.chat,
+					mode: "chat",
+					status: "success",
+					usage: raw.usage ?? null,
+				});
+
 				return jsonResponse({
 					ok: true,
 					sessionId,
 					model: MODEL,
 					reply,
 					usage: raw.usage ?? null,
-				});
+				}, requestId);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : "Unknown error";
-				return errorResponse(ROUTES.chat, 500, message);
+				queueIntakeEvent(ctx, env, {
+					requestId,
+					route: ROUTES.chat,
+					mode: "chat",
+					status: "error",
+					errorCode: "500",
+					errorMessage: message,
+				});
+				return errorResponse(ROUTES.chat, 500, message, requestId);
 			}
 		}
 
 		if (request.method === "POST" && url.pathname === ROUTES.analyze) {
-			const parsedBody = await parseAnalyzeRequestBody(request);
+			const throttle = checkThrottle(request, ROUTES.analyze);
+			if (!throttle.ok) {
+				queueIntakeEvent(ctx, env, {
+					requestId,
+					route: ROUTES.analyze,
+					status: "throttled",
+					errorCode: "429",
+					errorMessage: "Rate limit exceeded.",
+				});
+				return errorResponse(
+					ROUTES.analyze,
+					429,
+					"Rate limit exceeded.",
+					requestId,
+					{
+						retry_after_seconds: throttle.retryAfterSeconds,
+						throttle: {
+							limit: THROTTLE_LIMIT,
+							window_seconds: THROTTLE_WINDOW_SECONDS,
+						},
+					},
+				);
+			}
+
+			const parsedBody = await parseAnalyzeRequestBody(request, requestId);
 			if (!parsedBody.ok) {
+				queueIntakeEvent(ctx, env, {
+					requestId,
+					route: ROUTES.analyze,
+					status: "error",
+					errorCode: String(parsedBody.response.status),
+					errorMessage: "Request validation failed.",
+				});
 				return parsedBody.response;
 			}
 
@@ -1221,25 +1685,27 @@ export default {
 				const raw = await env.AI.run(MODEL, {
 					instructions:
 						parsedBody.body.instructions ?? DEFAULT_ANALYZE_INSTRUCTIONS,
-					input: parsedBody.body.input,
+					input: buildAnalyzeInput(parsedBody.body),
 					max_tokens: parsedBody.body.max_tokens ?? DEFAULT_MAX_TOKENS,
 					temperature: 0.2,
 				});
 
 				const parsedResponse = parseModelResponse(raw);
 				if ("error" in parsedResponse) {
-					return errorResponse(ROUTES.analyze, 502, parsedResponse.error, {
-						model: MODEL,
-						...(parsedResponse.rawText ? { raw_text: parsedResponse.rawText } : {}),
+					queueIntakeEvent(ctx, env, {
+						requestId,
+						route: ROUTES.analyze,
+						mode: getAnalyzeMode(parsedBody.body),
+						status: "error",
+						usage: raw.usage ?? null,
+						errorCode: "502",
+						errorMessage: parsedResponse.error,
 					});
-				}
-
-				const normalized = normalizeBranchOpsResponse(parsedResponse.parsed);
-				if (!normalized) {
 					return errorResponse(
 						ROUTES.analyze,
 						502,
-						"Model returned invalid JSON contract.",
+						parsedResponse.error,
+						requestId,
 						{
 							model: MODEL,
 							...(parsedResponse.rawText
@@ -1249,15 +1715,56 @@ export default {
 					);
 				}
 
+				const normalized = normalizeBranchOpsResponse(parsedResponse.parsed);
+				if (!normalized) {
+					queueIntakeEvent(ctx, env, {
+						requestId,
+						route: ROUTES.analyze,
+						mode: getAnalyzeMode(parsedBody.body),
+						status: "error",
+						usage: raw.usage ?? null,
+						errorCode: "502",
+						errorMessage: "Model returned invalid JSON contract.",
+					});
+					return errorResponse(
+						ROUTES.analyze,
+						502,
+						"Model returned invalid JSON contract.",
+						requestId,
+						{
+							model: MODEL,
+							...(parsedResponse.rawText
+								? { raw_text: parsedResponse.rawText }
+								: {}),
+						},
+					);
+				}
+
+				queueIntakeEvent(ctx, env, {
+					requestId,
+					route: ROUTES.analyze,
+					mode: getAnalyzeMode(parsedBody.body),
+					status: "success",
+					usage: raw.usage ?? null,
+				});
+
 				return jsonResponse({
 					ok: true,
 					model: MODEL,
 					data: normalized,
 					usage: raw.usage ?? null,
-				});
+				}, requestId);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : "Unknown error";
-				return errorResponse(ROUTES.analyze, 500, message);
+				queueIntakeEvent(ctx, env, {
+					requestId,
+					route: ROUTES.analyze,
+					mode: getAnalyzeMode(parsedBody.body),
+					status: "error",
+					errorCode: "500",
+					errorMessage: message,
+				});
+				return errorResponse(ROUTES.analyze, 500, message, requestId);
 			}
 		}
 
@@ -1267,9 +1774,9 @@ export default {
 			url.pathname === ROUTES.chat ||
 			url.pathname === ROUTES.analyze
 		) {
-			return handleMethodNotAllowed(url.pathname);
+			return handleMethodNotAllowed(url.pathname, requestId);
 		}
 
-		return handleNotFound();
+		return handleNotFound(requestId);
 	},
 } satisfies ExportedHandler<Env>;

@@ -17,3 +17,25 @@ ON chat_messages(session_id);
 
 CREATE INDEX IF NOT EXISTS idx_chat_messages_created_at
 ON chat_messages(created_at);
+
+CREATE TABLE IF NOT EXISTS intake_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  request_id TEXT NOT NULL,
+  route TEXT NOT NULL,
+  mode TEXT,
+  status TEXT NOT NULL,
+  timestamp TEXT NOT NULL,
+  token_usage TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_intake_events_request_id
+ON intake_events(request_id);
+
+CREATE INDEX IF NOT EXISTS idx_intake_events_route_status
+ON intake_events(route, status);
+
+CREATE INDEX IF NOT EXISTS idx_intake_events_timestamp
+ON intake_events(timestamp);
