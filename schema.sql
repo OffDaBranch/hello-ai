@@ -58,3 +58,26 @@ ON intake_leads(request_id);
 
 CREATE INDEX IF NOT EXISTS idx_intake_leads_created_at
 ON intake_leads(created_at);
+
+CREATE TABLE IF NOT EXISTS lead_sync_queue (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  request_id TEXT NOT NULL,
+  destination TEXT NOT NULL DEFAULT 'airtable',
+  status TEXT NOT NULL DEFAULT 'queued',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_lead_sync_queue_request_id
+ON lead_sync_queue(request_id);
+
+CREATE INDEX IF NOT EXISTS idx_lead_sync_queue_destination
+ON lead_sync_queue(destination);
+
+CREATE INDEX IF NOT EXISTS idx_lead_sync_queue_status
+ON lead_sync_queue(status);
+
+CREATE INDEX IF NOT EXISTS idx_lead_sync_queue_created_at
+ON lead_sync_queue(created_at);

@@ -1,5 +1,5 @@
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import worker, { type Env } from "../src/index";
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
@@ -17,6 +17,8 @@ type DbMockOptions = {
 	throwOnBatch?: boolean;
 	throwOnAll?: boolean;
 	leadRows?: Record<string, unknown>[];
+	queueRows?: Record<string, unknown>[];
+	syncRows?: Record<string, unknown>[];
 };
 
 function createDbMock(options: boolean | DbMockOptions = false): MockDb {
@@ -24,14 +26,31 @@ function createDbMock(options: boolean | DbMockOptions = false): MockDb {
 		typeof options === "boolean" ? { throwOnBatch: options } : options;
 	const statements: RecordedStatement[] = [];
 
-	return {
-		prepare(sql: string) {
-			return {
-				bind: (...params: unknown[]) =>
-					({ sql, params }) as unknown as D1PreparedStatement,
-				all: async () => {
+	const statement = (
+		sql: string,
+		params: unknown[] = [],
+	): D1PreparedStatement & RecordedStatement => {
+		return {
+			sql,
+			params,
+			bind: (...boundParams: unknown[]) => statement(sql, boundParams),
+			all: async () => {
 					if (config.throwOnAll) {
 						throw new Error("D1 read failed");
+					}
+					if (sql.includes("FROM lead_sync_queue q")) {
+						return {
+							results: config.syncRows ?? [],
+							success: true,
+							meta: {},
+						};
+					}
+					if (sql.includes("FROM lead_sync_queue")) {
+						return {
+							results: config.queueRows ?? [],
+							success: true,
+							meta: {},
+						};
 					}
 					return {
 						results: config.leadRows ?? [],
@@ -39,13 +58,23 @@ function createDbMock(options: boolean | DbMockOptions = false): MockDb {
 						meta: {},
 					};
 				},
-			} as unknown as D1PreparedStatement;
+		} as unknown as D1PreparedStatement & RecordedStatement;
+	};
+
+	return {
+		prepare(sql: string) {
+			return statement(sql);
 		},
 		batch: async (items: readonly D1PreparedStatement[]) => {
 			if (config.throwOnBatch) {
 				throw new Error("D1 write failed");
 			}
-			statements.push(...(items as unknown as RecordedStatement[]));
+			statements.push(
+				...(items as unknown as RecordedStatement[]).map((item) => ({
+					sql: item.sql,
+					params: item.params,
+				})),
+			);
 			return [] as unknown as D1Result[];
 		},
 		statements,
@@ -75,6 +104,10 @@ function expectRequestId(payload: { request_id?: unknown }): void {
 }
 
 describe("BranchOps AI Intake Worker", () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
 	it("returns the browser chat demo on GET /", async () => {
 		const request = new IncomingRequest("http://example.com/");
 		const ctx = createExecutionContext();
@@ -113,6 +146,12 @@ describe("BranchOps AI Intake Worker", () => {
 		expect(html).toContain("D1 Logging");
 		expect(html).toContain("CSV fields");
 		expect(html).toContain("ADMIN_EXPORT_TOKEN");
+		expect(html).toContain("Airtable Sync Queue");
+		expect(html).toContain("GET /admin/export/sync-queue");
+		expect(html).toContain("POST /admin/sync/airtable");
+		expect(html).toContain("AIRTABLE_API_KEY");
+		expect(html).toContain("AIRTABLE_BASE_ID");
+		expect(html).toContain("AIRTABLE_TABLE_NAME");
 		expect(html).toContain("Recommended use case");
 		expect(html).toContain("Prompt helper bullets");
 		expect(html).toContain("Raw /health JSON");
@@ -141,13 +180,20 @@ describe("BranchOps AI Intake Worker", () => {
 				chat: "POST /chat",
 				analyze: "POST /analyze",
 				admin_export_intake_leads: "GET /admin/export/intake-leads",
+				admin_export_sync_queue: "GET /admin/export/sync-queue",
+				admin_sync_airtable: "POST /admin/sync/airtable",
 			},
 			runtime_requirements: {
 				bindings: ["AI", "hello_ai_prod"],
-				vars: ["ADMIN_EXPORT_TOKEN optional for admin export"],
+				vars: [
+					"ADMIN_EXPORT_TOKEN optional for admin export",
+					"AIRTABLE_API_KEY optional for Airtable sync",
+					"AIRTABLE_BASE_ID optional for Airtable sync",
+					"AIRTABLE_TABLE_NAME optional for Airtable sync",
+				],
 			},
 		});
-		expect(payload.route_map).toHaveLength(5);
+		expect(payload.route_map).toHaveLength(7);
 		expect(payload.request_contracts.chat.content_type).toBe("application/json");
 		expect(payload.request_contracts.analyze.optional_fields).toEqual([
 			"mode",
@@ -199,6 +245,20 @@ describe("BranchOps AI Intake Worker", () => {
 			route: "/admin/export/intake-leads",
 			configured: false,
 			content_type: "text/csv",
+		});
+		expect(payload.airtable_sync).toMatchObject({
+			enabled: true,
+			configured: false,
+			required_vars: [
+				"AIRTABLE_API_KEY",
+				"AIRTABLE_BASE_ID",
+				"AIRTABLE_TABLE_NAME",
+			],
+			routes: {
+				queue_export: "GET /admin/export/sync-queue",
+				manual_sync: "POST /admin/sync/airtable",
+			},
+			destination: "airtable",
 		});
 	});
 
@@ -501,6 +561,16 @@ describe("BranchOps AI Intake Worker", () => {
 			"Automation Workflow",
 		]);
 		expect(lead?.params).not.toContain("Analyze this startup");
+		const syncQueue = db.statements.find((statement) =>
+			statement.sql.startsWith("INSERT INTO lead_sync_queue"),
+		);
+		expect(syncQueue?.params).toEqual([
+			payload.request_id,
+			"airtable",
+			"queued",
+			0,
+		]);
+		expect(syncQueue?.params).not.toContain("Analyze this startup");
 	});
 
 	it("rejects invalid analyze lead email", async () => {
@@ -860,6 +930,259 @@ describe("BranchOps AI Intake Worker", () => {
 		expect(csv).toContain('"req-123","Avery Founder","avery@example.com"');
 	});
 
+	it("returns 503 for sync queue export when token is not configured", async () => {
+		const request = new IncomingRequest(
+			"http://example.com/admin/export/sync-queue",
+		);
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, createEnv({}), ctx);
+
+		await waitOnExecutionContext(ctx);
+		expect(response.status).toBe(503);
+		const payload = await response.json();
+		expectRequestId(payload);
+		expect(payload).toMatchObject({
+			ok: false,
+			error: "Admin export is not configured.",
+			route: "/admin/export/sync-queue",
+			required_env_var: "ADMIN_EXPORT_TOKEN",
+		});
+	});
+
+	it("requires bearer token for configured sync queue export", async () => {
+		const request = new IncomingRequest(
+			"http://example.com/admin/export/sync-queue",
+		);
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(
+			request,
+			createEnv({}, createDbMock(), [], { ADMIN_EXPORT_TOKEN: "secret-token" }),
+			ctx,
+		);
+
+		await waitOnExecutionContext(ctx);
+		expect(response.status).toBe(401);
+		const payload = await response.json();
+		expectRequestId(payload);
+		expect(payload).toMatchObject({
+			ok: false,
+			error: "Unauthorized.",
+			route: "/admin/export/sync-queue",
+		});
+	});
+
+	it("exports sync queue records as JSON when bearer token is valid", async () => {
+		const request = new IncomingRequest(
+			"http://example.com/admin/export/sync-queue",
+			{
+				headers: {
+					authorization: "Bearer secret-token",
+				},
+			},
+		);
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(
+			request,
+			createEnv(
+				{},
+				createDbMock({
+					queueRows: [
+						{
+							id: 1,
+							request_id: "req-123",
+							destination: "airtable",
+							status: "queued",
+							attempts: 0,
+							last_error: null,
+							created_at: "2026-04-29T00:00:00.000Z",
+							updated_at: "2026-04-29T00:00:00.000Z",
+						},
+					],
+				}),
+				[],
+				{ ADMIN_EXPORT_TOKEN: "secret-token" },
+			),
+			ctx,
+		);
+
+		await waitOnExecutionContext(ctx);
+		expect(response.status).toBe(200);
+		const payload = await response.json();
+		expectRequestId(payload);
+		expect(payload).toMatchObject({
+			ok: true,
+			data: {
+				records: [
+					{
+						id: 1,
+						request_id: "req-123",
+						destination: "airtable",
+						status: "queued",
+						attempts: 0,
+						last_error: null,
+					},
+				],
+			},
+		});
+		expect(JSON.stringify(payload)).not.toContain("secret-token");
+	});
+
+	it("requires bearer token for configured Airtable sync", async () => {
+		const request = new IncomingRequest("http://example.com/admin/sync/airtable", {
+			method: "POST",
+		});
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(
+			request,
+			createEnv({}, createDbMock(), [], { ADMIN_EXPORT_TOKEN: "secret-token" }),
+			ctx,
+		);
+
+		await waitOnExecutionContext(ctx);
+		expect(response.status).toBe(401);
+		const payload = await response.json();
+		expectRequestId(payload);
+		expect(payload).toMatchObject({
+			ok: false,
+			error: "Unauthorized.",
+			route: "/admin/sync/airtable",
+		});
+	});
+
+	it("returns 503 for Airtable sync when Airtable vars are missing", async () => {
+		const request = new IncomingRequest("http://example.com/admin/sync/airtable", {
+			method: "POST",
+			headers: {
+				authorization: "Bearer secret-token",
+			},
+		});
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(
+			request,
+			createEnv({}, createDbMock(), [], { ADMIN_EXPORT_TOKEN: "secret-token" }),
+			ctx,
+		);
+
+		await waitOnExecutionContext(ctx);
+		expect(response.status).toBe(503);
+		const payload = await response.json();
+		expectRequestId(payload);
+		expect(payload).toMatchObject({
+			ok: false,
+			error: "Airtable sync is not configured.",
+			route: "/admin/sync/airtable",
+			required_env_vars: [
+				"AIRTABLE_API_KEY",
+				"AIRTABLE_BASE_ID",
+				"AIRTABLE_TABLE_NAME",
+			],
+		});
+	});
+
+	it("syncs queued leads to Airtable and marks queue rows synced", async () => {
+		const airtableFetch = vi.fn(async () => {
+			return new Response(JSON.stringify({ records: [{ id: "rec-123" }] }), {
+				status: 200,
+				headers: {
+					"content-type": "application/json",
+				},
+			});
+		});
+		vi.stubGlobal("fetch", airtableFetch);
+
+		const request = new IncomingRequest("http://example.com/admin/sync/airtable", {
+			method: "POST",
+			headers: {
+				authorization: "Bearer secret-token",
+			},
+		});
+		const db = createDbMock({
+			syncRows: [
+				{
+					id: 1,
+					request_id: "req-123",
+					destination: "airtable",
+					status: "queued",
+					attempts: 0,
+					last_error: null,
+					created_at: "2026-04-29T00:00:00.000Z",
+					updated_at: "2026-04-29T00:00:00.000Z",
+					name: "Avery Founder",
+					email: "avery@example.com",
+					phone: "+1 555 0100",
+					business_name: "Avery Ops LLC",
+					location: "Detroit, MI",
+					preferred_contact: "email",
+					mode: "Automation Workflow",
+					lead_created_at: "2026-04-29T00:00:00.000Z",
+				},
+			],
+		});
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(
+			request,
+			createEnv({}, db, [], {
+				ADMIN_EXPORT_TOKEN: "secret-token",
+				AIRTABLE_API_KEY: "fake-airtable-key",
+				AIRTABLE_BASE_ID: "appFakeBase",
+				AIRTABLE_TABLE_NAME: "Leads",
+			} as unknown as Partial<Env>),
+			ctx,
+		);
+
+		await waitOnExecutionContext(ctx);
+		expect(response.status).toBe(200);
+		const payload = await response.json();
+		expectRequestId(payload);
+		expect(payload).toMatchObject({
+			ok: true,
+			data: {
+				summary: {
+					processed: 1,
+					synced: 1,
+					failed: 0,
+					skipped: 0,
+				},
+			},
+		});
+		expect(airtableFetch).toHaveBeenCalledWith(
+			"https://api.airtable.com/v0/appFakeBase/Leads",
+			expect.objectContaining({
+				method: "POST",
+				headers: expect.objectContaining({
+					Authorization: "Bearer fake-airtable-key",
+					"Content-Type": "application/json",
+				}),
+				body: JSON.stringify({
+					records: [
+						{
+							fields: {
+								"Request ID": "req-123",
+								Name: "Avery Founder",
+								Email: "avery@example.com",
+								Phone: "+1 555 0100",
+								"Business Name": "Avery Ops LLC",
+								Location: "Detroit, MI",
+								"Preferred Contact": "email",
+								Mode: "Automation Workflow",
+								"Created At": "2026-04-29T00:00:00.000Z",
+							},
+						},
+					],
+				}),
+			}),
+		);
+		expect(db.statements).toEqual(
+			expect.arrayContaining([
+				{
+					sql: "UPDATE lead_sync_queue SET status = ?, attempts = attempts + 1, last_error = ?, updated_at = ? WHERE id = ?",
+					params: ["synced", null, expect.any(String), 1],
+				},
+			]),
+		);
+		expect(JSON.stringify(payload)).not.toContain("fake-airtable-key");
+	});
+
 	it("returns 404 on unknown routes", async () => {
 		const request = new IncomingRequest("http://example.com/unknown");
 		const ctx = createExecutionContext();
@@ -878,6 +1201,8 @@ describe("BranchOps AI Intake Worker", () => {
 				"POST /chat",
 				"POST /analyze",
 				"GET /admin/export/intake-leads",
+				"GET /admin/export/sync-queue",
+				"POST /admin/sync/airtable",
 			],
 		});
 	});
