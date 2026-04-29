@@ -543,6 +543,41 @@ const CHAT_DEMO_HTML = `<!doctype html>
 			background: #f8fafc;
 			padding: 10px;
 		}
+		.metric-value {
+			display: block;
+			margin-top: 8px;
+			font-size: 1.35rem;
+			font-weight: 800;
+			color: #172033;
+		}
+		.planner-grid {
+			display: grid;
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+			gap: 12px;
+			margin-bottom: 12px;
+		}
+		.helper-list {
+			margin: 0;
+			padding-left: 18px;
+			color: #243044;
+			line-height: 1.5;
+		}
+		.callout {
+			border: 1px solid #bfdbfe;
+			border-radius: 8px;
+			background: #eff6ff;
+			padding: 12px;
+		}
+		.callout strong {
+			display: block;
+			margin-bottom: 6px;
+		}
+		.health-grid {
+			display: grid;
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+			gap: 12px;
+			margin-bottom: 12px;
+		}
 		code {
 			background: #eef3f8;
 			border-radius: 6px;
@@ -591,7 +626,7 @@ const CHAT_DEMO_HTML = `<!doctype html>
 			}
 		}
 		@media (max-width: 640px) {
-			.form-grid, .lead-grid, .result-grid, .route-list {
+			.form-grid, .lead-grid, .result-grid, .route-list, .planner-grid, .health-grid {
 				grid-template-columns: 1fr;
 			}
 			.card {
@@ -650,13 +685,23 @@ const CHAT_DEMO_HTML = `<!doctype html>
 			</header>
 
 			<section id="dashboardPanel" data-panel-section="dashboard">
-				<div class="card-grid">
-					<div class="card"><p class="card-title">Intake Modes</p><p>Ten BranchOps planning lanes drive the active analyzer mode.</p></div>
-					<div class="card"><p class="card-title">Lead Capture</p><p>Optional contact fields link a request ID to follow-up records.</p></div>
-					<div class="card"><p class="card-title">Export Status</p><p>CSV export stays locked unless ADMIN_EXPORT_TOKEN is configured.</p></div>
-					<div class="card"><p class="card-title">Request ID</p><p>Every JSON response carries a request_id for traceability.</p></div>
-					<div class="card"><p class="card-title">Throttle Guard</p><p>Chat and analyze requests use a simple per-route IP throttle.</p></div>
-					<div class="card"><p class="card-title">D1 Logging</p><p>Structured events and voluntary leads write to D1 without prompt storage.</p></div>
+				<div id="dashboardCards" class="card-grid">
+					<div class="card"><p class="card-title">Intake Modes</p><p>Active planner lanes</p><span id="intakeModeCount" class="metric-value">10</span></div>
+					<div class="card"><p class="card-title">Lead Capture</p><p>Optional fields linked by request_id</p><span id="leadCaptureStatus" class="metric-value">Enabled</span></div>
+					<div class="card"><p class="card-title">Export Configured</p><p>ADMIN_EXPORT_TOKEN status</p><span id="exportConfiguredStatus" class="metric-value">Checking</span></div>
+					<div class="card"><p class="card-title">D1 Logging</p><p>Events and leads tables</p><span class="metric-value">Active</span></div>
+					<div class="card"><p class="card-title">Throttle Limit</p><p>Per route client guard</p><span id="throttleLimit" class="metric-value">30 / 60s</span></div>
+					<div class="card"><p class="card-title">Current Route Map</p><p>Published Worker routes</p><span id="routeCount" class="metric-value">5</span></div>
+				</div>
+				<div class="panel">
+					<h3>Current route map</h3>
+					<div id="dashboardRoutes" class="route-list">
+						<div class="route-item"><strong>GET /</strong><br />Sidebar workspace UI</div>
+						<div class="route-item"><strong>POST /analyze</strong><br />Structured BranchOps asset plan</div>
+						<div class="route-item"><strong>POST /chat</strong><br />Separate conversational lane</div>
+						<div class="route-item"><strong>GET /health</strong><br />Capabilities and route metadata</div>
+						<div class="route-item"><strong>GET /admin/export/intake-leads</strong><br />Bearer-protected CSV export</div>
+					</div>
 				</div>
 				<div class="panel">
 					<h3>BranchOps schema cards</h3>
@@ -669,6 +714,20 @@ const CHAT_DEMO_HTML = `<!doctype html>
 					<div class="panel">
 						<h3 id="modeTitle">New Intake</h3>
 						<p id="modeDescription" class="muted">General Business Asset turns an early idea into a structured BranchOps asset plan.</p>
+						<div class="planner-grid">
+							<div class="route-item">
+								<strong>Recommended use case</strong>
+								<p id="modeUseCase" class="muted">Use this when a raw business idea needs a same-day asset map.</p>
+							</div>
+							<div class="route-item">
+								<strong>Preselected analyze mode</strong>
+								<p id="modeActiveLabel" class="muted">General Business Asset</p>
+							</div>
+						</div>
+						<div class="callout">
+							<strong>Prompt helper bullets</strong>
+							<ul id="modePromptHelpers" class="helper-list"></ul>
+						</div>
 						<form id="intakeForm">
 							<label>
 								Active intake mode
@@ -734,8 +793,10 @@ const CHAT_DEMO_HTML = `<!doctype html>
 					<h3>Lead Capture</h3>
 					<p class="muted">Lead capture is optional. Records use request_id, mode, and submitted contact fields. Full prompt content is not stored in the lead table.</p>
 					<div class="route-list">
-						<div class="route-item"><strong>Fields</strong><br />name, email, phone, business_name, location, preferred_contact</div>
-						<div class="route-item"><strong>D1 table</strong><br /><code>intake_leads</code></div>
+						<div class="route-item"><strong>Optional lead fields</strong><br />name, email, phone, business_name, location, preferred_contact</div>
+						<div class="route-item"><strong>Stored in D1</strong><br /><code>request_id</code>, lead fields, selected mode, created_at</div>
+						<div class="route-item"><strong>Not stored</strong><br />Full private prompt content is not written to intake_leads.</div>
+						<div class="route-item"><strong>Linked request_id</strong><br />The analyze response request_id becomes the bridge from plan to lead record.</div>
 					</div>
 				</div>
 			</section>
@@ -746,9 +807,13 @@ const CHAT_DEMO_HTML = `<!doctype html>
 					<p class="muted">Admin export requires ADMIN_EXPORT_TOKEN. The browser does not ask for, store, or expose the token.</p>
 					<div class="route-list">
 						<div class="route-item"><strong>Route</strong><br /><code>GET /admin/export/intake-leads</code></div>
-						<div class="route-item"><strong>Auth</strong><br />Bearer token via configured environment secret</div>
-						<div class="route-item"><strong>Format</strong><br />text/csv</div>
+						<div class="route-item"><strong>Token required</strong><br />Bearer token via configured ADMIN_EXPORT_TOKEN environment secret</div>
+						<div class="route-item"><strong>CSV fields</strong><br />request_id, name, email, phone, business_name, location, preferred_contact, mode, created_at</div>
 						<div class="route-item"><strong>Missing token</strong><br />503 admin export is not configured</div>
+					</div>
+					<div class="panel">
+						<h3>Safe curl example</h3>
+						<pre>curl.exe -H "Authorization: Bearer &lt;ADMIN_EXPORT_TOKEN&gt;" https://&lt;worker-url&gt;/admin/export/intake-leads</pre>
 					</div>
 				</div>
 			</section>
@@ -759,7 +824,16 @@ const CHAT_DEMO_HTML = `<!doctype html>
 					<div class="actions">
 						<button id="refreshHealthBtn" class="primary-button" type="button">Refresh health</button>
 					</div>
-					<pre id="healthOutput">Health data has not been loaded.</pre>
+					<div id="healthCards" class="health-grid">
+						<div class="route-item"><strong>Status</strong><br /><span id="healthStatus">Not loaded</span></div>
+						<div class="route-item"><strong>Admin export</strong><br /><span id="healthExport">Not loaded</span></div>
+						<div class="route-item"><strong>Routes</strong><br /><span id="healthRouteCount">Not loaded</span></div>
+					</div>
+					<div id="healthRoutes" class="route-list"></div>
+					<details>
+						<summary>Raw /health JSON</summary>
+						<pre id="healthOutput">Health data has not been loaded.</pre>
+					</details>
 				</div>
 			</section>
 		</main>
@@ -770,21 +844,74 @@ const CHAT_DEMO_HTML = `<!doctype html>
 			var STORAGE_KEY = 'branchops-intake-chat-history';
 			var SESSION_KEY = 'branchops-intake-session';
 			var modeDetails = {
-				'General Business Asset': 'Turns an early idea into a structured BranchOps asset plan.',
-				'Licensing / Royalty Model': 'Shapes royalty, license, and reusable rights models.',
-				'Automation Workflow': 'Maps manual work into automations, systems, and triggers.',
-				'Digital Product / App': 'Frames app, tool, portal, and digital product plans.',
-				'Content / Media Asset': 'Packages media, content, channel, and audience assets.',
-				'Grant / Workforce Program': 'Structures workforce, grant, and program delivery assets.',
-				'Real Estate / Property System': 'Plans property, asset management, and real estate systems.',
-				'Clothing / Brand / IP Asset': 'Organizes brand, apparel, IP, and licensing pathways.',
-				'Food / Infused Product R&D': 'Frames product R&D, operational needs, and compliance risk.',
-				'Compliance / Risk Review': 'Surfaces legal, privacy, tax, safety, and operating risks.'
+				'General Business Asset': {
+					title: 'New Intake',
+					description: 'Turns an early idea into a structured BranchOps asset plan.',
+					useCase: 'Use when a raw founder or business idea needs a same-day asset map.',
+					helpers: ['Describe the customer and outcome.', 'Name the asset you want to create.', 'List the first practical constraint.']
+				},
+				'Licensing / Royalty Model': {
+					title: 'Licensing Builder',
+					description: 'Shapes royalty, license, and reusable rights models.',
+					useCase: 'Use when an idea could become licensed IP, a royalty stream, or a repeatable rights package.',
+					helpers: ['Identify what can be licensed.', 'Describe who pays and why.', 'Name exclusivity, territory, or usage questions.']
+				},
+				'Automation Workflow': {
+					title: 'Automation Planner',
+					description: 'Maps manual work into automations, systems, and triggers.',
+					useCase: 'Use when repeated tasks, intake steps, or follow-up workflows should become a system.',
+					helpers: ['List the current manual steps.', 'Identify trigger events and handoffs.', 'Name data that should be logged.']
+				},
+				'Digital Product / App': {
+					title: 'Digital Product Planner',
+					description: 'Frames app, tool, portal, and digital product plans.',
+					useCase: 'Use when the asset might become software, a portal, an app, or a paid digital workflow.',
+					helpers: ['Describe the user role.', 'Name the core action the product enables.', 'List must-have screens or outputs.']
+				},
+				'Content / Media Asset': {
+					title: 'Content / Media Asset',
+					description: 'Packages media, content, channel, and audience assets.',
+					useCase: 'Use when content, education, media, or audience trust can become a business asset.',
+					helpers: ['Define the audience promise.', 'List reusable content formats.', 'Name distribution and monetization paths.']
+				},
+				'Grant / Workforce Program': {
+					title: 'Grant / Workforce Program',
+					description: 'Structures workforce, grant, and program delivery assets.',
+					useCase: 'Use when a program needs eligibility, partners, deliverables, funding, and compliance review.',
+					helpers: ['Describe the served population.', 'List program outcomes and reporting needs.', 'Name likely funders or partners.']
+				},
+				'Real Estate / Property System': {
+					title: 'Real Estate System',
+					description: 'Plans property, asset management, and real estate systems.',
+					useCase: 'Use when a property, location, lease, or operating process needs a repeatable system.',
+					helpers: ['Describe the property or geography.', 'List revenue and operating assumptions.', 'Name legal, zoning, or maintenance risks.']
+				},
+				'Clothing / Brand / IP Asset': {
+					title: 'Brand / IP Asset',
+					description: 'Organizes brand, apparel, IP, and licensing pathways.',
+					useCase: 'Use when a clothing, identity, design, or trademarkable idea needs structure.',
+					helpers: ['Name the brand promise.', 'List products or marks involved.', 'Identify manufacturing, IP, and channel risks.']
+				},
+				'Food / Infused Product R&D': {
+					title: 'Food / Product R&D',
+					description: 'Frames product R&D, operational needs, and compliance risk.',
+					useCase: 'Use when food, beverage, infused, or formulated product ideas need a safe planning frame.',
+					helpers: ['Describe the product and intended market.', 'List ingredients or production assumptions.', 'Flag safety, labeling, and regulatory questions.']
+				},
+				'Compliance / Risk Review': {
+					title: 'Compliance Review',
+					description: 'Surfaces legal, privacy, tax, safety, and operating risks.',
+					useCase: 'Use when an idea needs risk mapping before execution or promotion.',
+					helpers: ['Describe the planned activity.', 'List sensitive data, regulated claims, or contracts.', 'Name decisions that require professional review.']
+				}
 			};
 			var activeTitle = document.getElementById('activeTitle');
 			var activeDescription = document.getElementById('activeDescription');
 			var modeTitle = document.getElementById('modeTitle');
 			var modeDescription = document.getElementById('modeDescription');
+			var modeUseCase = document.getElementById('modeUseCase');
+			var modeActiveLabel = document.getElementById('modeActiveLabel');
+			var modePromptHelpers = document.getElementById('modePromptHelpers');
 			var modeSelect = document.getElementById('modeSelect');
 			var ideaInput = document.getElementById('ideaInput');
 			var audienceInput = document.getElementById('audienceInput');
@@ -793,6 +920,16 @@ const CHAT_DEMO_HTML = `<!doctype html>
 			var instructionsInput = document.getElementById('instructionsInput');
 			var resultCards = document.getElementById('resultCards');
 			var requestIdLine = document.getElementById('requestIdLine');
+			var exportConfiguredStatus = document.getElementById('exportConfiguredStatus');
+			var intakeModeCount = document.getElementById('intakeModeCount');
+			var leadCaptureStatus = document.getElementById('leadCaptureStatus');
+			var throttleLimit = document.getElementById('throttleLimit');
+			var routeCount = document.getElementById('routeCount');
+			var dashboardRoutes = document.getElementById('dashboardRoutes');
+			var healthStatus = document.getElementById('healthStatus');
+			var healthExport = document.getElementById('healthExport');
+			var healthRouteCount = document.getElementById('healthRouteCount');
+			var healthRoutes = document.getElementById('healthRoutes');
 			var healthOutput = document.getElementById('healthOutput');
 			var chatLog = document.getElementById('chatLog');
 			var chatInput = document.getElementById('chatInput');
@@ -922,10 +1059,19 @@ const CHAT_DEMO_HTML = `<!doctype html>
 					modeSelect.value = mode;
 				}
 				var selectedMode = currentMode();
-				modeTitle.textContent = selectedMode;
-				modeDescription.textContent = modeDetails[selectedMode];
-				activeTitle.textContent = selectedMode;
-				activeDescription.textContent = modeDetails[selectedMode];
+				var details = modeDetails[selectedMode];
+				modeTitle.textContent = details.title;
+				modeDescription.textContent = details.description;
+				modeUseCase.textContent = details.useCase;
+				modeActiveLabel.textContent = selectedMode;
+				modePromptHelpers.innerHTML = '';
+				details.helpers.forEach(function (helper) {
+					var item = document.createElement('li');
+					item.textContent = helper;
+					modePromptHelpers.appendChild(item);
+				});
+				activeTitle.textContent = details.title;
+				activeDescription.textContent = details.description;
 			}
 
 			function showPanel(panel, mode) {
@@ -1034,10 +1180,36 @@ const CHAT_DEMO_HTML = `<!doctype html>
 				try {
 					var response = await fetch('/health');
 					var body = await response.json();
+					renderHealthCards(body);
 					healthOutput.textContent = JSON.stringify(body, null, 2);
 				} catch (error) {
 					healthOutput.textContent = 'Health request failed: ' + (error && error.message ? error.message : 'Unknown error');
 				}
+			}
+
+			function renderHealthCards(body) {
+				var routes = body && body.routes ? Object.keys(body.routes) : [];
+				healthStatus.textContent = body && body.status ? body.status : 'unknown';
+				healthExport.textContent = body && body.admin_export && body.admin_export.configured ? 'Configured' : 'Not configured';
+				healthRouteCount.textContent = String(routes.length);
+				exportConfiguredStatus.textContent = body && body.admin_export && body.admin_export.configured ? 'Yes' : 'No';
+				intakeModeCount.textContent = body && body.request_contracts && body.request_contracts.analyze ? String(body.request_contracts.analyze.intake_modes.length) : '10';
+				leadCaptureStatus.textContent = body && body.lead_capture && body.lead_capture.enabled ? 'Enabled' : 'Off';
+				throttleLimit.textContent = body && body.throttle ? body.throttle.limit + ' / ' + body.throttle.window_seconds + 's' : '30 / 60s';
+				routeCount.textContent = String(routes.length || 5);
+				healthRoutes.innerHTML = '';
+				dashboardRoutes.innerHTML = '';
+				routes.forEach(function (key) {
+					var route = body.routes[key];
+					var healthItem = document.createElement('div');
+					healthItem.className = 'route-item';
+					healthItem.innerHTML = '<strong>' + key + '</strong><br /><code>' + route + '</code>';
+					healthRoutes.appendChild(healthItem);
+					var dashItem = document.createElement('div');
+					dashItem.className = 'route-item';
+					dashItem.innerHTML = '<strong>' + route + '</strong><br />' + key.replace(/_/g, ' ');
+					dashboardRoutes.appendChild(dashItem);
+				});
 			}
 
 			document.querySelectorAll('[data-nav]').forEach(function (button) {
@@ -1098,6 +1270,8 @@ const CHAT_DEMO_HTML = `<!doctype html>
 
 			renderResultCards({});
 			renderChat();
+			applyMode(currentMode());
+			loadHealth();
 		})();
 	</script>
 </body>
