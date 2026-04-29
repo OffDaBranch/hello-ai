@@ -39,3 +39,22 @@ ON intake_events(route, status);
 
 CREATE INDEX IF NOT EXISTS idx_intake_events_timestamp
 ON intake_events(timestamp);
+
+CREATE TABLE IF NOT EXISTS intake_leads (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  request_id TEXT NOT NULL,
+  name TEXT,
+  email TEXT,
+  phone TEXT,
+  business_name TEXT,
+  location TEXT,
+  preferred_contact TEXT,
+  mode TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_intake_leads_request_id
+ON intake_leads(request_id);
+
+CREATE INDEX IF NOT EXISTS idx_intake_leads_created_at
+ON intake_leads(created_at);

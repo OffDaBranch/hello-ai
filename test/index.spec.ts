@@ -13,7 +13,15 @@ type MockDb = D1Database & {
 	statements: RecordedStatement[];
 };
 
-function createDbMock(throwOnBatch = false): MockDb {
+type DbMockOptions = {
+	throwOnBatch?: boolean;
+	throwOnAll?: boolean;
+	leadRows?: Record<string, unknown>[];
+};
+
+function createDbMock(options: boolean | DbMockOptions = false): MockDb {
+	const config: DbMockOptions =
+		typeof options === "boolean" ? { throwOnBatch: options } : options;
 	const statements: RecordedStatement[] = [];
 
 	return {
@@ -21,10 +29,20 @@ function createDbMock(throwOnBatch = false): MockDb {
 			return {
 				bind: (...params: unknown[]) =>
 					({ sql, params }) as unknown as D1PreparedStatement,
+				all: async () => {
+					if (config.throwOnAll) {
+						throw new Error("D1 read failed");
+					}
+					return {
+						results: config.leadRows ?? [],
+						success: true,
+						meta: {},
+					};
+				},
 			} as unknown as D1PreparedStatement;
 		},
 		batch: async (items: readonly D1PreparedStatement[]) => {
-			if (throwOnBatch) {
+			if (config.throwOnBatch) {
 				throw new Error("D1 write failed");
 			}
 			statements.push(...(items as unknown as RecordedStatement[]));
@@ -38,6 +56,7 @@ function createEnv(
 	response: Awaited<ReturnType<Env["AI"]["run"]>>,
 	db: MockDb = createDbMock(),
 	aiRequests: Record<string, unknown>[] = [],
+	overrides: Partial<Env> = {},
 ): Env {
 	return {
 		AI: {
@@ -47,6 +66,7 @@ function createEnv(
 			},
 		},
 		hello_ai_prod: db,
+		...overrides,
 	};
 }
 
@@ -76,6 +96,10 @@ describe("BranchOps AI Intake Worker", () => {
 		expect(html).toContain("Clothing / Brand / IP Asset");
 		expect(html).toContain("Food / Infused Product R&amp;D");
 		expect(html).toContain("Compliance / Risk Review");
+		expect(html).toContain("Optional contact info for follow-up");
+		expect(html).toContain("Business name");
+		expect(html).toContain("Preferred contact");
+		expect(html).toContain("Analyze intake");
 	});
 
 	it("returns an explicit route map on GET /health", async () => {
@@ -100,19 +124,26 @@ describe("BranchOps AI Intake Worker", () => {
 				health: "GET /health",
 				chat: "POST /chat",
 				analyze: "POST /analyze",
+				admin_export_intake_leads: "GET /admin/export/intake-leads",
 			},
 			runtime_requirements: {
 				bindings: ["AI", "hello_ai_prod"],
-				vars: [],
+				vars: ["ADMIN_EXPORT_TOKEN optional for admin export"],
 			},
 		});
-		expect(payload.route_map).toHaveLength(4);
+		expect(payload.route_map).toHaveLength(5);
 		expect(payload.request_contracts.chat.content_type).toBe("application/json");
 		expect(payload.request_contracts.analyze.optional_fields).toEqual([
 			"mode",
 			"audience",
 			"urgency",
 			"budget",
+			"name",
+			"email",
+			"phone",
+			"business_name",
+			"location",
+			"preferred_contact",
 			"instructions",
 			"max_tokens",
 		]);
@@ -135,6 +166,23 @@ describe("BranchOps AI Intake Worker", () => {
 			routes: ["/chat", "/analyze"],
 			limit: 30,
 			window_seconds: 60,
+		});
+		expect(payload.lead_capture).toMatchObject({
+			enabled: true,
+			fields: [
+				"name",
+				"email",
+				"phone",
+				"business_name",
+				"location",
+				"preferred_contact",
+			],
+			stores_full_prompt: false,
+		});
+		expect(payload.admin_export).toMatchObject({
+			route: "/admin/export/intake-leads",
+			configured: false,
+			content_type: "text/csv",
 		});
 	});
 
@@ -323,6 +371,12 @@ describe("BranchOps AI Intake Worker", () => {
 				audience: "solo founder",
 				urgency: "same-day",
 				budget: "lean",
+				name: "Avery Founder",
+				email: "avery@example.com",
+				phone: "+1 555 0100",
+				business_name: "Avery Ops LLC",
+				location: "Detroit, MI",
+				preferred_contact: "email",
 			}),
 		});
 		const ctx = createExecutionContext();
@@ -398,6 +452,7 @@ describe("BranchOps AI Intake Worker", () => {
 		expect(aiRequests[0].input).toContain("Audience: solo founder");
 		expect(aiRequests[0].input).toContain("Urgency: same-day");
 		expect(aiRequests[0].input).toContain("Budget: lean");
+		expect(aiRequests[0].input).not.toContain("avery@example.com");
 		const event = db.statements.find((statement) =>
 			statement.sql.startsWith("INSERT INTO intake_events"),
 		);
@@ -416,6 +471,45 @@ describe("BranchOps AI Intake Worker", () => {
 			null,
 		]);
 		expect(event?.params).not.toContain("Analyze this startup");
+		const lead = db.statements.find((statement) =>
+			statement.sql.startsWith("INSERT INTO intake_leads"),
+		);
+		expect(lead?.params).toEqual([
+			payload.request_id,
+			"Avery Founder",
+			"avery@example.com",
+			"+1 555 0100",
+			"Avery Ops LLC",
+			"Detroit, MI",
+			"email",
+			"Automation Workflow",
+		]);
+		expect(lead?.params).not.toContain("Analyze this startup");
+	});
+
+	it("rejects invalid analyze lead email", async () => {
+		const request = new IncomingRequest("http://example.com/analyze", {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+			},
+			body: JSON.stringify({
+				input: "Analyze this startup",
+				email: "not-an-email",
+			}),
+		});
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, createEnv({}), ctx);
+
+		await waitOnExecutionContext(ctx);
+		expect(response.status).toBe(400);
+		const payload = await response.json();
+		expectRequestId(payload);
+		expect(payload).toMatchObject({
+			ok: false,
+			error: "'email' must be a valid email address when provided.",
+			route: "/analyze",
+		});
 	});
 
 	it("normalizes common model drift into the public contract", async () => {
@@ -526,7 +620,7 @@ describe("BranchOps AI Intake Worker", () => {
 		});
 	});
 
-	it("keeps analyze behavior working when event logging fails", async () => {
+	it("keeps analyze behavior working when lead persistence fails", async () => {
 		const request = new IncomingRequest("http://example.com/analyze", {
 			method: "POST",
 			headers: {
@@ -536,6 +630,8 @@ describe("BranchOps AI Intake Worker", () => {
 			body: JSON.stringify({
 				input: "Analyze this startup",
 				mode: "Licensing / Royalty Model",
+				name: "Jordan Founder",
+				email: "jordan@example.com",
 			}),
 		});
 		const ctx = createExecutionContext();
@@ -661,6 +757,93 @@ describe("BranchOps AI Intake Worker", () => {
 		});
 	});
 
+	it("returns 503 for admin lead export when token is not configured", async () => {
+		const request = new IncomingRequest(
+			"http://example.com/admin/export/intake-leads",
+		);
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, createEnv({}), ctx);
+
+		await waitOnExecutionContext(ctx);
+		expect(response.status).toBe(503);
+		const payload = await response.json();
+		expectRequestId(payload);
+		expect(payload).toMatchObject({
+			ok: false,
+			error: "Admin export is not configured.",
+			route: "/admin/export/intake-leads",
+			required_env_var: "ADMIN_EXPORT_TOKEN",
+		});
+	});
+
+	it("requires bearer token for configured admin lead export", async () => {
+		const request = new IncomingRequest(
+			"http://example.com/admin/export/intake-leads",
+		);
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(
+			request,
+			createEnv({}, createDbMock(), [], { ADMIN_EXPORT_TOKEN: "secret-token" }),
+			ctx,
+		);
+
+		await waitOnExecutionContext(ctx);
+		expect(response.status).toBe(401);
+		const payload = await response.json();
+		expectRequestId(payload);
+		expect(payload).toMatchObject({
+			ok: false,
+			error: "Unauthorized.",
+			route: "/admin/export/intake-leads",
+		});
+	});
+
+	it("exports intake leads as CSV when bearer token is valid", async () => {
+		const request = new IncomingRequest(
+			"http://example.com/admin/export/intake-leads",
+			{
+				headers: {
+					authorization: "Bearer secret-token",
+				},
+			},
+		);
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(
+			request,
+			createEnv(
+				{},
+				createDbMock({
+					leadRows: [
+						{
+							request_id: "req-123",
+							name: "Avery Founder",
+							email: "avery@example.com",
+							phone: "+1 555 0100",
+							business_name: "Avery Ops LLC",
+							location: "Detroit, MI",
+							preferred_contact: "email",
+							mode: "Automation Workflow",
+							created_at: "2026-04-29T00:00:00.000Z",
+						},
+					],
+				}),
+				[],
+				{ ADMIN_EXPORT_TOKEN: "secret-token" },
+			),
+			ctx,
+		);
+
+		await waitOnExecutionContext(ctx);
+		expect(response.status).toBe(200);
+		expect(response.headers.get("content-type")).toContain("text/csv");
+		expect(response.headers.get("x-request-id")).toEqual(expect.any(String));
+		const csv = await response.text();
+		expect(csv).toContain(
+			"request_id,name,email,phone,business_name,location,preferred_contact,mode,created_at",
+		);
+		expect(csv).toContain('"req-123","Avery Founder","avery@example.com"');
+	});
+
 	it("returns 404 on unknown routes", async () => {
 		const request = new IncomingRequest("http://example.com/unknown");
 		const ctx = createExecutionContext();
@@ -678,6 +861,7 @@ describe("BranchOps AI Intake Worker", () => {
 				"GET /health",
 				"POST /chat",
 				"POST /analyze",
+				"GET /admin/export/intake-leads",
 			],
 		});
 	});

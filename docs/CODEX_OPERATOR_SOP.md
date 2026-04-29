@@ -16,7 +16,8 @@ npm install
 ```
 
 4. Confirm Cloudflare access is available through `wrangler login` or a scoped `CLOUDFLARE_API_TOKEN`.
-5. Confirm the D1 database has the current schema from `schema.sql`, including `intake_events`, before expecting structured event logs.
+5. Confirm the D1 database has the current schema from `schema.sql`, including `intake_events` and `intake_leads`, before expecting structured event logs or lead export.
+6. Configure `ADMIN_EXPORT_TOKEN` as a Cloudflare secret only when admin CSV export should be enabled. Do not commit or hardcode the token.
 
 ## Local Dev
 
@@ -33,7 +34,7 @@ Use the local Wrangler URL to inspect:
 - `POST /chat`
 - `POST /analyze`
 
-The browser page should show the BranchOps intake mode menu. `/chat` and `/analyze` JSON responses should include `request_id`.
+The browser page should show the BranchOps intake mode menu and an optional contact info section. `/chat` and `/analyze` JSON responses should include `request_id`.
 
 ## Validation
 
@@ -75,7 +76,10 @@ Confirm:
 
 - `request_id` appears on all JSON responses.
 - `/analyze` accepts optional `mode`, `audience`, `urgency`, and `budget`.
+- `/analyze` accepts optional lead fields and rejects malformed email values.
 - `/chat` and `/analyze` create public-safe `intake_events` rows without storing full content.
+- lead submissions create `intake_leads` rows linked by `request_id` without storing full prompt content.
+- `GET /admin/export/intake-leads` returns `503` until `ADMIN_EXPORT_TOKEN` is configured.
 - Throttled requests return `429` with `request_id`.
 
 ## Rollback
@@ -103,7 +107,7 @@ git status
 
 ```powershell
 git add README.md docs/CODEX_OPERATOR_SOP.md docs/ASSET_REGISTER.md schema.sql src/index.ts test/index.spec.ts
-git commit -m "Add BranchOps intake controls and logs"
+git commit -m "Add intake lead capture and export"
 ```
 
 5. Push the active branch:

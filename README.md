@@ -20,6 +20,7 @@ This repository is the public-safe same-day intake Worker for BranchOps asset pl
 | `GET` | `/health` | Return status, asset metadata, route contracts, and runtime requirements | JSON metadata and route contracts |
 | `POST` | `/chat` | Run conversational chat and persist the transcript to D1 | `sessionId`, `reply`, `usage` |
 | `POST` | `/analyze` | Convert a raw idea into a structured BranchOps asset plan | BranchOps planning schema |
+| `GET` | `/admin/export/intake-leads` | Export captured lead records when admin export is configured | Bearer-token protected CSV |
 
 The browser UI includes intake mode menu options for general asset planning, licensing, automation, apps, content/media, grants/workforce, real estate, clothing/brand/IP, food or infused product R&D, and compliance review.
 
@@ -65,6 +66,12 @@ The browser UI includes intake mode menu options for general asset planning, lic
   "audience": "optional target audience",
   "urgency": "optional timing signal",
   "budget": "optional budget signal",
+  "name": "optional lead name",
+  "email": "optional lead email",
+  "phone": "optional lead phone",
+  "business_name": "optional business name",
+  "location": "optional location",
+  "preferred_contact": "optional contact preference",
   "instructions": "optional non-empty string",
   "max_tokens": 700
 }
@@ -74,9 +81,12 @@ Validation rules:
 
 - `content-type` must include `application/json`
 - body must be a JSON object
-- `/analyze` allows only `input`, `mode`, `audience`, `urgency`, `budget`, `instructions`, and `max_tokens`
+- `/analyze` allows only `input`, `mode`, `audience`, `urgency`, `budget`, `name`, `email`, `phone`, `business_name`, `location`, `preferred_contact`, `instructions`, and `max_tokens`
 - `input` is required and capped at `8000` characters
 - `mode`, `audience`, `urgency`, and `budget` are capped at `200` characters each
+- lead fields are optional and length-capped
+- `email` must look like a valid email address when provided
+- `phone` is lenient but capped at `40` characters
 - `instructions` is capped at `2000` characters
 - `max_tokens` must be an integer between `1` and `700`
 - `/chat` also supports `sessionId`, `messages`, and `temperature`
@@ -164,6 +174,24 @@ Every JSON response includes `request_id`. `/chat` and `/analyze` use a safe def
 
 The log intentionally does not store full prompt, chat, reply, or idea content by default.
 
+## Lead Capture And Export
+
+Optional lead fields on `/analyze` are stored in `intake_leads` only when at least one lead field is provided. The full private prompt is not stored in the lead table.
+
+`GET /admin/export/intake-leads` returns a CSV export with:
+
+- `request_id`
+- `name`
+- `email`
+- `phone`
+- `business_name`
+- `location`
+- `preferred_contact`
+- `mode`
+- `created_at`
+
+Admin export is protected by `Authorization: Bearer <token>` when `ADMIN_EXPORT_TOKEN` is configured. If `ADMIN_EXPORT_TOKEN` is missing, the route returns `503` with a safe JSON message explaining that admin export is not configured. No secret is hardcoded in this repo.
+
 ## Environment Requirements
 
 Runtime bindings:
@@ -176,6 +204,7 @@ D1 schema:
 - `chat_sessions`
 - `chat_messages`
 - `intake_events`
+- `intake_leads`
 
 Operator requirements:
 
