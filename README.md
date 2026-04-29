@@ -21,6 +21,8 @@ This repository is the public-safe same-day intake Worker for BranchOps asset pl
 | `POST` | `/chat` | Run conversational chat and persist the transcript to D1 | `sessionId`, `reply`, `usage` |
 | `POST` | `/analyze` | Convert a raw idea into a structured BranchOps asset plan | BranchOps planning schema |
 
+The browser UI includes intake mode menu options for general asset planning, licensing, automation, apps, content/media, grants/workforce, real estate, clothing/brand/IP, food or infused product R&D, and compliance review.
+
 ## Workflow
 
 `request -> validate -> process -> respond`
@@ -59,6 +61,10 @@ This repository is the public-safe same-day intake Worker for BranchOps asset pl
 ```json
 {
   "input": "required non-empty string",
+  "mode": "optional intake menu value",
+  "audience": "optional target audience",
+  "urgency": "optional timing signal",
+  "budget": "optional budget signal",
   "instructions": "optional non-empty string",
   "max_tokens": 700
 }
@@ -68,11 +74,25 @@ Validation rules:
 
 - `content-type` must include `application/json`
 - body must be a JSON object
-- `/analyze` allows only `input`, `instructions`, and `max_tokens`
+- `/analyze` allows only `input`, `mode`, `audience`, `urgency`, `budget`, `instructions`, and `max_tokens`
 - `input` is required and capped at `8000` characters
+- `mode`, `audience`, `urgency`, and `budget` are capped at `200` characters each
 - `instructions` is capped at `2000` characters
 - `max_tokens` must be an integer between `1` and `700`
 - `/chat` also supports `sessionId`, `messages`, and `temperature`
+
+Supported browser intake modes:
+
+- General Business Asset
+- Licensing / Royalty Model
+- Automation Workflow
+- Digital Product / App
+- Content / Media Asset
+- Grant / Workforce Program
+- Real Estate / Property System
+- Clothing / Brand / IP Asset
+- Food / Infused Product R&D
+- Compliance / Risk Review
 
 ## Response Contracts
 
@@ -80,6 +100,7 @@ Validation rules:
 
 `GET /health` returns:
 
+- `request_id`
 - `ok` and `status`
 - service name
 - asset ID
@@ -94,6 +115,7 @@ Validation rules:
 
 ```json
 {
+  "request_id": "uuid",
   "ok": true,
   "model": "@cf/openai/gpt-oss-120b",
   "data": {
@@ -116,6 +138,7 @@ Validation rules:
 
 ```json
 {
+  "request_id": "uuid",
   "ok": false,
   "error": "Descriptive failure message",
   "route": "/analyze"
@@ -124,12 +147,35 @@ Validation rules:
 
 `502` responses may also include `model` and `raw_text` when the model fails the contract.
 
+Every JSON response includes `request_id`. `/chat` and `/analyze` use a safe default per-IP throttle of `30` requests per `60` seconds per route inside the active Worker isolate. A throttle response returns `429`, `request_id`, `retry_after_seconds`, and throttle metadata.
+
+## Structured Event Logs
+
+`/chat` and `/analyze` write best-effort D1 event rows to `intake_events`:
+
+- `request_id`
+- `route`
+- `mode`
+- `status`
+- `timestamp`
+- `token_usage`
+- `error_code`
+- `error_message`
+
+The log intentionally does not store full prompt, chat, reply, or idea content by default.
+
 ## Environment Requirements
 
 Runtime bindings:
 
 - `AI`
 - `hello_ai_prod`
+
+D1 schema:
+
+- `chat_sessions`
+- `chat_messages`
+- `intake_events`
 
 Operator requirements:
 

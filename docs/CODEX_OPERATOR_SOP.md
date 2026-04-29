@@ -16,6 +16,7 @@ npm install
 ```
 
 4. Confirm Cloudflare access is available through `wrangler login` or a scoped `CLOUDFLARE_API_TOKEN`.
+5. Confirm the D1 database has the current schema from `schema.sql`, including `intake_events`, before expecting structured event logs.
 
 ## Local Dev
 
@@ -32,6 +33,8 @@ Use the local Wrangler URL to inspect:
 - `POST /chat`
 - `POST /analyze`
 
+The browser page should show the BranchOps intake mode menu. `/chat` and `/analyze` JSON responses should include `request_id`.
+
 ## Validation
 
 Run the full project validation:
@@ -41,6 +44,12 @@ npm run validate
 ```
 
 This runs TypeScript build checks and the Vitest suite.
+
+Review dependency audit output separately:
+
+```powershell
+npm audit
+```
 
 ## Deploy Dry Run
 
@@ -62,6 +71,13 @@ npm run deploy
 
 After deployment, verify `GET /health` on the deployed Worker URL and run one safe `/analyze` request with non-sensitive test input.
 
+Confirm:
+
+- `request_id` appears on all JSON responses.
+- `/analyze` accepts optional `mode`, `audience`, `urgency`, and `budget`.
+- `/chat` and `/analyze` create public-safe `intake_events` rows without storing full content.
+- Throttled requests return `429` with `request_id`.
+
 ## Rollback
 
 1. Identify the previous good deployment in Cloudflare Workers deployments.
@@ -78,6 +94,7 @@ After deployment, verify `GET /health` on the deployed Worker URL and run one sa
 ```powershell
 npm run validate
 npm run deploy:dry-run
+npm audit
 git diff --stat
 git status
 ```
@@ -85,8 +102,8 @@ git status
 4. Commit with a clear asset-oriented message:
 
 ```powershell
-git add README.md docs/CODEX_OPERATOR_SOP.md docs/ASSET_REGISTER.md src/index.ts test/index.spec.ts
-git commit -m "Convert hello-ai to BranchOps intake worker"
+git add README.md docs/CODEX_OPERATOR_SOP.md docs/ASSET_REGISTER.md schema.sql src/index.ts test/index.spec.ts
+git commit -m "Add BranchOps intake controls and logs"
 ```
 
 5. Push the active branch:
