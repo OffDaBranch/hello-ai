@@ -17,6 +17,7 @@ This repository is the public-safe same-day intake Worker for BranchOps asset pl
 | Method | Path | Purpose | Contract |
 | --- | --- | --- | --- |
 | `GET` | `/` | Serve the browser intake/chat demo UI | HTML demo surface |
+| `GET` | `/output-utility` | Format generated BranchOps results for reuse | HTML output utility with copy/share/print/download actions |
 | `GET` | `/health` | Return status, asset metadata, route contracts, and runtime requirements | JSON metadata and route contracts |
 | `POST` | `/chat` | Run conversational chat and persist the transcript to D1 | `sessionId`, `reply`, `usage` |
 | `POST` | `/analyze` | Convert a raw idea into a structured BranchOps asset plan | BranchOps planning schema |
@@ -25,6 +26,17 @@ This repository is the public-safe same-day intake Worker for BranchOps asset pl
 | `POST` | `/admin/sync/airtable` | Manually sync queued lead records to Airtable | Bearer-token protected JSON summary |
 
 The browser UI is an app-style BranchOps workspace with a desktop sidebar, mobile menu behavior, structured analyzer panel, separate chat lane, lead capture panel, admin export panel, and system health panel.
+
+## Output Utility Layer
+
+Generated BranchOps results can be reused as business assets through the browser output actions on the structured result panel:
+
+- Copy Result
+- Share Result, using Web Share when available and copy fallback otherwise
+- Print / Save PDF through browser print
+- Download TXT
+
+`GET /output-utility` also serves a standalone formatter for pasted BranchOps JSON results. Both paths use the deterministic plain-text order documented in [BranchOps Output Format](docs/BRANCHOPS_OUTPUT_FORMAT.md). The utility does not add backend integrations, does not store results in third-party services, and redacts secret-like fields before export.
 
 ## UI Navigation
 
