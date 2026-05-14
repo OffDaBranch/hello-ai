@@ -58,6 +58,28 @@ describe("BranchOps output formatter", () => {
 		expect(text).toContain("Legal / Compliance Risks\n- Review claims");
 	});
 
+	it("reads root metadata fields while formatting nested response data", () => {
+		const text = formatBranchOpsOutputText({
+			result: {
+				request_id: "req_nested",
+				mode: "Operator Intake",
+				createdAt: "2026-05-14T16:00:00.000Z",
+				data: {
+					objective: "Turn the generated plan into a reusable asset.",
+					classification: "Business Asset",
+				},
+			},
+		});
+
+		expect(text).toContain("Request ID\nreq_nested");
+		expect(text).toContain("Mode\nOperator Intake");
+		expect(text).toContain("Timestamp\n2026-05-14T16:00:00.000Z");
+		expect(text).toContain(
+			"Objective\nTurn the generated plan into a reusable asset.",
+		);
+		expect(text).toContain("Classification\nBusiness Asset");
+	});
+
 	it("keeps missing fields explicit in the export", () => {
 		const text = formatBranchOpsOutputText({
 			requestId: "req_missing",

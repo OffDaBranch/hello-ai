@@ -1066,7 +1066,7 @@ const CHAT_DEMO_HTML = `<!doctype html>
 				long_term_value: 'long_term_value'
 			};
 			var outputFields = [
-				{ key: 'request_id', title: 'Request ID' },
+				{ key: 'request_id', title: 'Request ID', aliases: ['requestId'] },
 				{ key: 'mode', title: 'Mode' },
 				{ key: 'timestamp', title: 'Timestamp', aliases: ['createdAt', 'created_at'] },
 				{ key: 'objective', title: 'Objective' },
@@ -1161,16 +1161,21 @@ const CHAT_DEMO_HTML = `<!doctype html>
 				return undefined;
 			}
 
+			function outputSource(result) {
+				if (!result || typeof result !== 'object') {
+					return {};
+				}
+				var nested = result.result || result.analysis || result.data;
+				if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+					return Object.assign({}, result, nested);
+				}
+				return result;
+			}
+
 			function formatOutputText(result) {
-				var source = result && result.data ? result.data : {};
+				var source = outputSource(result);
 				return outputFields.map(function (field) {
-					var value = field.key === 'request_id'
-						? result && result.request_id
-						: field.key === 'mode'
-							? currentMode()
-							: field.key === 'timestamp'
-								? new Date().toISOString()
-								: readOutputField(source, field);
+					var value = readOutputField(source, field);
 					return field.title + '\n' + formatOutputValue(value);
 				}).join('\n\n');
 			}
@@ -1377,7 +1382,10 @@ const CHAT_DEMO_HTML = `<!doctype html>
 						throw new Error(body.error || 'Analyze request failed.');
 					}
 					requestIdLine.textContent = 'Request ID: ' + body.request_id;
-					lastAnalyzeResult = body;
+					lastAnalyzeResult = Object.assign({
+						mode: payload.mode,
+						timestamp: new Date().toISOString()
+					}, body);
 					renderResultCards(body.data);
 				} catch (error) {
 					requestIdLine.textContent = 'Analyze error: ' + (error && error.message ? error.message : 'Unknown error');
@@ -1572,7 +1580,7 @@ const OUTPUT_UTILITY_HTML = `<!doctype html>
 <script>
 	(function () {
 		var fields = [
-			['request_id', 'Request ID'],
+			['request_id', 'Request ID', ['requestId']],
 			['mode', 'Mode'],
 			['timestamp', 'Timestamp', ['createdAt', 'created_at']],
 			['objective', 'Objective'],
@@ -1591,7 +1599,11 @@ const OUTPUT_UTILITY_HTML = `<!doctype html>
 		var status = document.getElementById('status');
 		function resultSource(value) {
 			if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-			return value.result || value.analysis || value.data || value;
+			var nested = value.result || value.analysis || value.data;
+			if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+				return Object.assign({}, value, nested);
+			}
+			return value;
 		}
 		function label(value) {
 			return value.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').trim().split(/\\s+/).map(function (word) {

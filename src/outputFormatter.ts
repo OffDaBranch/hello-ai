@@ -30,7 +30,7 @@ const EMPTY_VALUE = "Not returned by backend.";
 const REDACTED_VALUE = "[redacted sensitive value]";
 
 const OUTPUT_FIELDS: readonly OutputField[] = [
-	{ key: "request_id", title: "Request ID" },
+	{ key: "request_id", title: "Request ID", aliases: ["requestId"] },
 	{ key: "mode", title: "Mode" },
 	{ key: "timestamp", title: "Timestamp", aliases: ["createdAt", "created_at"] },
 	{ key: "objective", title: "Objective" },
@@ -141,7 +141,10 @@ function readResultSource(value: unknown): Record<string, ResultValue> | undefin
 
 	for (const key of ["result", "analysis", "data"] as const) {
 		if (isRecord(value[key])) {
-			return value[key] as Record<string, ResultValue>;
+			return {
+				...(value as Record<string, ResultValue>),
+				...(value[key] as Record<string, ResultValue>),
+			};
 		}
 	}
 
