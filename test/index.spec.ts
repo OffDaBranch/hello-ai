@@ -141,6 +141,11 @@ describe("BranchOps AI Intake Worker", () => {
 		expect(html).toContain("Preferred contact");
 		expect(html).toContain("Analyze intake");
 		expect(html).toContain("Structured results");
+		expect(html).toContain("Copy Result");
+		expect(html).toContain("Share Result");
+		expect(html).toContain("Print / Save PDF");
+		expect(html).toContain("Download TXT");
+		expect(html).toContain("@media print");
 		expect(html).toContain("Request ID");
 		expect(html).toContain("Throttle Limit");
 		expect(html).toContain("D1 Logging");
@@ -155,6 +160,27 @@ describe("BranchOps AI Intake Worker", () => {
 		expect(html).toContain("Recommended use case");
 		expect(html).toContain("Prompt helper bullets");
 		expect(html).toContain("Raw /health JSON");
+	});
+
+	it("serves the standalone output utility without changing health contracts", async () => {
+		const request = new IncomingRequest("http://example.com/output-utility");
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, createEnv({}), ctx);
+
+		await waitOnExecutionContext(ctx);
+		expect(response.status).toBe(200);
+		expect(response.headers.get("content-type")).toContain("text/html");
+		const html = await response.text();
+		expect(html).toContain("<title>BranchOps Output Utility</title>");
+		expect(html).toContain("Copy Result");
+		expect(html).toContain("Share");
+		expect(html).toContain("Print / Save PDF");
+		expect(html).toContain("Download TXT");
+		expect(html).toContain("navigator.share");
+		expect(html).toContain("@media print");
+		expect(html).not.toContain("ADMIN_EXPORT_TOKEN");
+		expect(html).not.toContain("AIRTABLE_API_KEY");
+		expect(html).not.toContain("CLOUDFLARE_API_TOKEN");
 	});
 
 	it("returns an explicit route map on GET /health", async () => {

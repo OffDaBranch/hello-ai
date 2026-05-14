@@ -149,6 +149,7 @@ const VERSION = "0.1.0";
 const MODEL = "@cf/openai/gpt-oss-120b";
 const ROUTES = {
 	root: "/",
+	outputUtility: "/output-utility",
 	health: "/health",
 	chat: "/chat",
 	analyze: "/analyze",
@@ -516,6 +517,22 @@ const CHAT_DEMO_HTML = `<!doctype html>
 			grid-template-columns: repeat(2, minmax(0, 1fr));
 			gap: 12px;
 		}
+		.output-actions {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 10px;
+			margin: 10px 0 12px;
+		}
+		.output-status {
+			min-height: 20px;
+			margin-bottom: 10px;
+			color: #1d4ed8;
+			font-size: 0.88rem;
+			font-weight: 700;
+		}
+		.print-output {
+			display: none;
+		}
 		.result-card {
 			border: 1px solid #dbe3ed;
 			border-radius: 8px;
@@ -669,6 +686,31 @@ const CHAT_DEMO_HTML = `<!doctype html>
 				min-height: 0;
 			}
 		}
+		@media print {
+			body.output-printing {
+				background: #ffffff;
+			}
+			body.output-printing .mobile-topbar,
+			body.output-printing .sidebar,
+			body.output-printing .workspace-header,
+			body.output-printing .panel,
+			body.output-printing .actions,
+			body.output-printing button {
+				display: none !important;
+			}
+			body.output-printing .main {
+				padding: 0;
+			}
+			body.output-printing .print-output {
+				display: block !important;
+				white-space: pre-wrap;
+				color: #0f172a;
+				background: #ffffff;
+				border: 0;
+				max-height: none;
+				padding: 0;
+			}
+		}
 	</style>
 </head>
 <body>
@@ -808,6 +850,13 @@ const CHAT_DEMO_HTML = `<!doctype html>
 					<div class="panel">
 						<h3>Structured results</h3>
 						<p id="requestIdLine" class="muted">Request ID appears after analysis.</p>
+						<div class="output-actions" aria-label="BranchOps output actions">
+							<button id="copyResultBtn" class="secondary-button" type="button">Copy Result</button>
+							<button id="shareResultBtn" class="secondary-button" type="button">Share Result</button>
+							<button id="printResultBtn" class="secondary-button" type="button">Print / Save PDF</button>
+							<button id="downloadResultBtn" class="secondary-button" type="button">Download TXT</button>
+						</div>
+						<div id="outputActionStatus" class="output-status" role="status"></div>
 						<div id="resultCards" class="result-grid"></div>
 					</div>
 				</div>
@@ -885,6 +934,7 @@ const CHAT_DEMO_HTML = `<!doctype html>
 			</section>
 		</main>
 	</div>
+	<pre id="printOutput" class="print-output"></pre>
 
 	<script>
 		(function () {
@@ -967,6 +1017,8 @@ const CHAT_DEMO_HTML = `<!doctype html>
 			var instructionsInput = document.getElementById('instructionsInput');
 			var resultCards = document.getElementById('resultCards');
 			var requestIdLine = document.getElementById('requestIdLine');
+			var outputActionStatus = document.getElementById('outputActionStatus');
+			var printOutput = document.getElementById('printOutput');
 			var exportConfiguredStatus = document.getElementById('exportConfiguredStatus');
 			var intakeModeCount = document.getElementById('intakeModeCount');
 			var leadCaptureStatus = document.getElementById('leadCaptureStatus');
@@ -1013,6 +1065,22 @@ const CHAT_DEMO_HTML = `<!doctype html>
 				scaling_path: 'scaling_path',
 				long_term_value: 'long_term_value'
 			};
+			var outputFields = [
+				{ key: 'request_id', title: 'Request ID', aliases: ['requestId'] },
+				{ key: 'mode', title: 'Mode' },
+				{ key: 'timestamp', title: 'Timestamp', aliases: ['createdAt', 'created_at'] },
+				{ key: 'objective', title: 'Objective' },
+				{ key: 'classification', title: 'Classification' },
+				{ key: 'asset', title: 'Asset' },
+				{ key: 'execution_plan', title: 'Execution Plan', aliases: ['next_actions'] },
+				{ key: 'systems', title: 'Systems', aliases: ['systems_and_prompts'] },
+				{ key: 'monetization_model', title: 'Monetization Model' },
+				{ key: 'automation_opportunities', title: 'Automation Opportunities' },
+				{ key: 'legal_compliance_risks', title: 'Legal / Compliance Risks', aliases: ['risks'] },
+				{ key: 'scaling_path', title: 'Scaling Path' },
+				{ key: 'long_term_value', title: 'Long-Term Value' }
+			];
+			var lastAnalyzeResult = null;
 			var sessionId = localStorage.getItem(SESSION_KEY) || crypto.randomUUID();
 			var messages = loadMessages();
 
@@ -1043,6 +1111,131 @@ const CHAT_DEMO_HTML = `<!doctype html>
 					return value;
 				}
 				return JSON.stringify(value, null, 2);
+			}
+
+			function cleanLabel(label) {
+				return label.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').trim().split(/\s+/).map(function (word) {
+					return word.charAt(0).toUpperCase() + word.slice(1);
+				}).join(' ');
+			}
+
+			function redactScalar(value) {
+				return String(value).replace(/sk-[A-Za-z0-9_-]{6,}/g, '[redacted sensitive value]').replace(/[A-Z0-9_]*(TOKEN|SECRET|API_KEY|PASSWORD)[A-Z0-9_]*\s*=\s*\S+/g, '[redacted sensitive value]');
+			}
+
+			function formatOutputValue(value, depth) {
+				depth = depth || 0;
+				if (value === null || value === undefined || value === '') {
+					return 'Not returned by backend.';
+				}
+				if (Array.isArray(value)) {
+					return value.length ? value.map(function (item) {
+						return '  '.repeat(depth) + '- ' + formatOutputValue(item, depth + 1).trimStart();
+					}).join('\n') : 'Not returned by backend.';
+				}
+				if (typeof value === 'object') {
+					var rows = Object.keys(value).filter(function (key) {
+						return !/(admin.*token|token|api.*key|secret|password|credential|private.*key)/i.test(key);
+					});
+					if (!rows.length) {
+						return 'Not returned by backend.';
+					}
+					return rows.map(function (key) {
+						var item = value[key];
+						if (item === null || typeof item !== 'object') {
+							return '  '.repeat(depth) + cleanLabel(key) + ': ' + formatOutputValue(item, depth);
+						}
+						return '  '.repeat(depth) + cleanLabel(key) + ':\n' + formatOutputValue(item, depth + 1);
+					}).join('\n');
+				}
+				return redactScalar(value);
+			}
+
+			function readOutputField(source, field) {
+				var names = [field.key].concat(field.aliases || []);
+				for (var index = 0; index < names.length; index += 1) {
+					if (source && Object.prototype.hasOwnProperty.call(source, names[index])) {
+						return source[names[index]];
+					}
+				}
+				return undefined;
+			}
+
+			function outputSource(result) {
+				if (!result || typeof result !== 'object') {
+					return {};
+				}
+				var nested = result.result || result.analysis || result.data;
+				if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+					return Object.assign({}, result, nested);
+				}
+				return result;
+			}
+
+			function formatOutputText(result) {
+				var source = outputSource(result);
+				return outputFields.map(function (field) {
+					var value = readOutputField(source, field);
+					return field.title + '\n' + formatOutputValue(value);
+				}).join('\n\n');
+			}
+
+			function currentOutputText() {
+				return lastAnalyzeResult ? formatOutputText(lastAnalyzeResult) : '';
+			}
+
+			async function copyResult() {
+				var text = currentOutputText();
+				if (!text) {
+					outputActionStatus.textContent = 'Run analysis before copying a result.';
+					return;
+				}
+				try {
+					await navigator.clipboard.writeText(text);
+					outputActionStatus.textContent = 'Result copied.';
+				} catch (error) {
+					outputActionStatus.textContent = 'Clipboard unavailable. Use Share Result instead.';
+				}
+			}
+
+			async function shareResult() {
+				var text = currentOutputText();
+				if (!text) {
+					outputActionStatus.textContent = 'Run analysis before sharing a result.';
+					return;
+				}
+				if (navigator.share) {
+					await navigator.share({ title: 'BranchOps Result', text: text });
+					outputActionStatus.textContent = 'Share sheet opened.';
+					return;
+				}
+				await copyResult();
+			}
+
+			function printResult() {
+				var text = currentOutputText();
+				if (!text) {
+					outputActionStatus.textContent = 'Run analysis before printing a result.';
+					return;
+				}
+				printOutput.textContent = text;
+				document.body.classList.add('output-printing');
+				window.print();
+			}
+
+			function downloadResult() {
+				var text = currentOutputText();
+				if (!text) {
+					outputActionStatus.textContent = 'Run analysis before downloading a result.';
+					return;
+				}
+				var blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+				var link = document.createElement('a');
+				link.href = URL.createObjectURL(blob);
+				link.download = 'branchops-result.txt';
+				link.click();
+				URL.revokeObjectURL(link.href);
+				outputActionStatus.textContent = 'TXT download prepared.';
 			}
 
 			function renderResultCards(data) {
@@ -1159,6 +1352,8 @@ const CHAT_DEMO_HTML = `<!doctype html>
 					return;
 				}
 				requestIdLine.textContent = 'Structuring intake...';
+				outputActionStatus.textContent = '';
+				lastAnalyzeResult = null;
 				renderResultCards({});
 				try {
 					var payload = Object.assign({
@@ -1187,6 +1382,10 @@ const CHAT_DEMO_HTML = `<!doctype html>
 						throw new Error(body.error || 'Analyze request failed.');
 					}
 					requestIdLine.textContent = 'Request ID: ' + body.request_id;
+					lastAnalyzeResult = Object.assign({
+						mode: payload.mode,
+						timestamp: new Date().toISOString()
+					}, body);
 					renderResultCards(body.data);
 				} catch (error) {
 					requestIdLine.textContent = 'Analyze error: ' + (error && error.message ? error.message : 'Unknown error');
@@ -1286,6 +1485,8 @@ const CHAT_DEMO_HTML = `<!doctype html>
 					leadInputs[key].value = '';
 				});
 				requestIdLine.textContent = 'Request ID appears after analysis.';
+				outputActionStatus.textContent = '';
+				lastAnalyzeResult = null;
 				renderResultCards({});
 			});
 
@@ -1312,6 +1513,13 @@ const CHAT_DEMO_HTML = `<!doctype html>
 			});
 
 			document.getElementById('refreshHealthBtn').addEventListener('click', loadHealth);
+			document.getElementById('copyResultBtn').addEventListener('click', copyResult);
+			document.getElementById('shareResultBtn').addEventListener('click', shareResult);
+			document.getElementById('printResultBtn').addEventListener('click', printResult);
+			document.getElementById('downloadResultBtn').addEventListener('click', downloadResult);
+			window.addEventListener('afterprint', function () {
+				document.body.classList.remove('output-printing');
+			});
 
 			modeSelect.addEventListener('change', function () {
 				applyMode(currentMode());
@@ -1323,6 +1531,157 @@ const CHAT_DEMO_HTML = `<!doctype html>
 			loadHealth();
 		})();
 	</script>
+</body>
+</html>`;
+
+const OUTPUT_UTILITY_HTML = `<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>BranchOps Output Utility</title>
+	<style>
+		:root { color-scheme: light; font-family: Arial, sans-serif; }
+		body { margin: 0; background: #f4f7fb; color: #0f172a; }
+		main { max-width: 920px; margin: 0 auto; padding: 32px 18px; }
+		h1 { font-size: 28px; margin: 0 0 8px; }
+		p { color: #475569; line-height: 1.5; }
+		textarea { width: 100%; min-height: 180px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; font: 14px/1.45 Consolas, monospace; box-sizing: border-box; }
+		button { border: 1px solid #cbd5e1; border-radius: 8px; background: #ffffff; color: #0f172a; cursor: pointer; font-weight: 700; min-height: 42px; padding: 0 14px; }
+		button.primary { background: #0f172a; color: #ffffff; }
+		.utility-toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0; }
+		.result-output { background: #ffffff; border: 1px solid #dbe3ee; border-radius: 8px; padding: 18px; white-space: pre-wrap; }
+		.status { min-height: 22px; color: #1d4ed8; font-weight: 700; }
+		@media print {
+			body { background: #ffffff; }
+			main { max-width: none; padding: 0; }
+			.utility-toolbar, .result-input, .status, button { display: none !important; }
+			.result-output { border: 0; padding: 0; }
+		}
+	</style>
+</head>
+<body>
+<main>
+	<h1>BranchOps Output Utility</h1>
+	<p>Paste a BranchOps JSON result, format it as plain text, then copy, share, print, or download it.</p>
+	<section class="result-input">
+		<textarea id="source" aria-label="BranchOps JSON result" spellcheck="false"></textarea>
+		<div class="utility-toolbar">
+			<button class="primary" id="format" type="button">Format Result</button>
+			<button id="copy" type="button">Copy Result</button>
+			<button id="share" type="button">Share</button>
+			<button id="print" type="button">Print / Save PDF</button>
+			<button id="download" type="button">Download TXT</button>
+		</div>
+		<div class="status" id="status" role="status"></div>
+	</section>
+	<pre class="result-output" id="output">No formatted result yet.</pre>
+</main>
+<script>
+	(function () {
+		var fields = [
+			['request_id', 'Request ID', ['requestId']],
+			['mode', 'Mode'],
+			['timestamp', 'Timestamp', ['createdAt', 'created_at']],
+			['objective', 'Objective'],
+			['classification', 'Classification'],
+			['asset', 'Asset'],
+			['execution_plan', 'Execution Plan', ['next_actions']],
+			['systems', 'Systems', ['systems_and_prompts']],
+			['monetization_model', 'Monetization Model'],
+			['automation_opportunities', 'Automation Opportunities'],
+			['legal_compliance_risks', 'Legal / Compliance Risks', ['risks']],
+			['scaling_path', 'Scaling Path'],
+			['long_term_value', 'Long-Term Value']
+		];
+		var source = document.getElementById('source');
+		var output = document.getElementById('output');
+		var status = document.getElementById('status');
+		function resultSource(value) {
+			if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+			var nested = value.result || value.analysis || value.data;
+			if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+				return Object.assign({}, value, nested);
+			}
+			return value;
+		}
+		function label(value) {
+			return value.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').trim().split(/\\s+/).map(function (word) {
+				return word.charAt(0).toUpperCase() + word.slice(1);
+			}).join(' ');
+		}
+		function formatValue(value, depth) {
+			depth = depth || 0;
+			if (value === null || value === undefined || value === '') return 'Not returned by backend.';
+			if (Array.isArray(value)) return value.length ? value.map(function (item) { return '  '.repeat(depth) + '- ' + formatValue(item, depth + 1).trimStart(); }).join('\\n') : 'Not returned by backend.';
+			if (typeof value === 'object') {
+				var rows = Object.keys(value).filter(function (name) { return !/(admin.*token|token|api.*key|secret|password|credential|private.*key)/i.test(name); });
+				if (!rows.length) return 'Not returned by backend.';
+				return rows.map(function (name) {
+					var item = value[name];
+					if (item === null || typeof item !== 'object') return '  '.repeat(depth) + label(name) + ': ' + formatValue(item, depth);
+					return '  '.repeat(depth) + label(name) + ':\\n' + formatValue(item, depth + 1);
+				}).join('\\n');
+			}
+			return String(value).replace(/sk-[A-Za-z0-9_-]{6,}/g, '[redacted sensitive value]').replace(/[A-Z0-9_]*(TOKEN|SECRET|API_KEY|PASSWORD)[A-Z0-9_]*\\s*=\\s*\\S+/g, '[redacted sensitive value]');
+		}
+		function readField(sourceValue, field) {
+			var names = [field[0]].concat(field[2] || []);
+			for (var index = 0; index < names.length; index += 1) {
+				if (Object.prototype.hasOwnProperty.call(sourceValue, names[index])) return sourceValue[names[index]];
+			}
+			return undefined;
+		}
+		function formatResult() {
+			var value;
+			try {
+				value = JSON.parse(source.value || '{}');
+			} catch {
+				status.textContent = 'Enter valid JSON before formatting.';
+				return;
+			}
+			var data = resultSource(value);
+			output.textContent = fields.map(function (field) { return field[1] + '\\n' + formatValue(readField(data, field)); }).join('\\n\\n');
+			status.textContent = 'Formatted plain text is ready.';
+		}
+		async function copyResult() {
+			formatResult();
+			try {
+				await navigator.clipboard.writeText(output.textContent);
+				status.textContent = 'Copied.';
+			} catch {
+				source.value = output.textContent;
+				source.focus();
+				source.select();
+				status.textContent = 'Copy from the selected text.';
+			}
+		}
+		async function shareResult() {
+			formatResult();
+			if (navigator.share) {
+				await navigator.share({ title: 'BranchOps Result', text: output.textContent });
+				status.textContent = 'Share sheet opened.';
+				return;
+			}
+			await copyResult();
+		}
+		function downloadResult() {
+			formatResult();
+			var blob = new Blob([output.textContent], { type: 'text/plain;charset=utf-8' });
+			var link = document.createElement('a');
+			link.href = URL.createObjectURL(blob);
+			link.download = 'branchops-result.txt';
+			link.click();
+			URL.revokeObjectURL(link.href);
+			status.textContent = 'TXT file prepared.';
+		}
+		document.getElementById('format').addEventListener('click', formatResult);
+		document.getElementById('copy').addEventListener('click', copyResult);
+		document.getElementById('share').addEventListener('click', shareResult);
+		document.getElementById('print').addEventListener('click', function () { formatResult(); window.print(); });
+		document.getElementById('download').addEventListener('click', downloadResult);
+	})();
+</script>
 </body>
 </html>`;
 
@@ -2661,6 +3020,7 @@ function handleHealth(requestId: string, env: Env): Response {
 function handleMethodNotAllowed(pathname: string, requestId: string): Response {
 	const allowedMethod =
 		pathname === ROUTES.root ||
+		pathname === ROUTES.outputUtility ||
 		pathname === ROUTES.health ||
 		pathname === ROUTES.adminExportIntakeLeads ||
 		pathname === ROUTES.adminExportSyncQueue
@@ -3018,6 +3378,10 @@ export default {
 			return htmlResponse(CHAT_DEMO_HTML);
 		}
 
+		if (request.method === "GET" && url.pathname === ROUTES.outputUtility) {
+			return htmlResponse(OUTPUT_UTILITY_HTML);
+		}
+
 		if (request.method === "GET" && url.pathname === ROUTES.health) {
 			return handleHealth(requestId, env);
 		}
@@ -3277,6 +3641,7 @@ export default {
 
 		if (
 			url.pathname === ROUTES.root ||
+			url.pathname === ROUTES.outputUtility ||
 			url.pathname === ROUTES.health ||
 			url.pathname === ROUTES.chat ||
 			url.pathname === ROUTES.analyze ||
