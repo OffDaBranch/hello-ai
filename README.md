@@ -12,6 +12,18 @@
 
 This repository is the public-safe same-day intake Worker for BranchOps asset planning. It is not the internal BranchOps control plane and should not contain private operating records, customer secrets, or production credentials.
 
+## Identity Boundary
+
+| Field | Value |
+| --- | --- |
+| Repository | `OffDaBranch/hello-ai` |
+| Durable asset | BranchOps AI Intake Worker |
+| Package identity | `branchops-ai-intake-worker` |
+| Cloudflare Worker deploy target | `hello-ai` |
+| D1 database | `hello-ai-prod` |
+
+The package and asset identity remain `branchops-ai-intake-worker` / BranchOps AI Intake Worker. The current Cloudflare Workers Builds deploy target for this repository is `hello-ai`, with the `hello_ai_prod` binding pointed at the `hello-ai-prod` D1 database. Do not rename package, asset registry, or D1 identities just to match the Cloudflare service name.
+
 ## Route Map
 
 | Method | Path | Purpose | Contract |

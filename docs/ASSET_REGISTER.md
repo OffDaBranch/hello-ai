@@ -8,6 +8,18 @@
 | Runtime | Cloudflare Workers + Workers AI + D1 |
 | Purpose | Convert raw founder/business ideas into structured BranchOps asset plans. |
 
+## Identity Boundary
+
+| Field | Value |
+| --- | --- |
+| Repository | `OffDaBranch/hello-ai` |
+| Durable Asset Name | BranchOps AI Intake Worker |
+| Package Identity | `branchops-ai-intake-worker` |
+| Cloudflare Worker Deploy Target | `hello-ai` |
+| D1 Database | `hello-ai-prod` |
+
+`branchops-ai-intake-worker` is the durable package and asset identity for registry, licensing, and monetization records. `hello-ai` is the Cloudflare Worker service name used by the active Workers Builds deploy target for this repository. Keep the D1 database identity as `hello-ai-prod` unless a separate approved migration changes storage ownership.
+
 ## Revenue Model
 
 The Worker supports intake for advisory, implementation, and licensing workflows. It can qualify raw ideas into paid planning engagements, productized implementation scopes, or recurring BranchOps platform opportunities.
